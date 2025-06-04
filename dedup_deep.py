@@ -253,9 +253,12 @@ def assign_groups(groups):
                                 })
                         else:
                                 # If the perceptual hashes are identical, skip computing pixel differences.
-                                diff = (pixel_diff(bp, mp)
-                                                if int(best.get(PHASH_COL or "0"), 16) != int(r.get(PHASH_COL or "0"), 16)
-                                                else 0.0)
+                                diff = (
+                                        pixel_diff(bp, mp)
+                                        if int(best.get(PHASH_COL) or "0", 16)
+                                        != int(r.get(PHASH_COL) or "0", 16)
+                                        else 0.0
+                                )
                                 is_dup = diff <= PIXEL_DIFF_THRESHOLD
                                 if is_dup:
                                         r.update({
