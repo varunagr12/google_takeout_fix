@@ -299,9 +299,9 @@ def main():
         if success:
             row['action_taken'] += f"; {msg}" if row['action_taken'] else msg
         else:
-            moved, reason = move_to_failed(str(media_path), msg)
-            row['action_taken'] = f"Moved to failed: {moved}" if moved else ''
-            row['notes'] = reason
+            log(f"File already moved to failed during timestamp update: {media_path}")
+            row['action_taken'] += "; Already moved to failed" if row['action_taken'] else "Already moved to failed"
+            row['notes'] = msg
 
     # Write the updated data back to the manifest CSV file
     fieldnames = [
