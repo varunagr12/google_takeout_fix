@@ -8,8 +8,6 @@ PROCESSING_ROOT = Path(r"C:\Users\vagrawal\OneDrive - Altair Engineering, Inc\Do
 UNMATCHED_PREFIX = PROCESSING_ROOT / "__UNMATCHED_MEDIA__"
 DRY_RUN = False 
 
-# Script execution starts here
-
 def fix_media_path(row):
     media_path = Path(row.get("media_path", ""))
     if not media_path.exists() and "unmatched_media" in row.get("row_type", "").lower():

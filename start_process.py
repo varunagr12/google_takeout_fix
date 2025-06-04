@@ -26,7 +26,7 @@ def delete_non_year_folders(photos_root):
             shutil.rmtree(item)
 
 def extract_and_process_zip(zip_file: Path):
-    # Extract suffix number
+    # Extract the numeric suffix from the ZIP filename
     match = re.search(r"-(\d{3})\.zip$", zip_file.name)
     if not match:
         print(f"⚠️ Skipping: Cannot extract number from {zip_file.name}")
@@ -51,7 +51,7 @@ def extract_and_process_zip(zip_file: Path):
         subprocess.run(extract_command, check=True)
         print(f"✅ Extracted to {extract_dir}")
 
-        # Clean up non-year folders
+        # Identify the folder that follows the 'Photos from YYYY' pattern and remove other folders in that directory
         photos_root = find_deepest_photos_root(extract_dir)
         if photos_root:
             print(f"📂 Identified 'Photos from YYYY' root at: {photos_root}")
@@ -59,13 +59,13 @@ def extract_and_process_zip(zip_file: Path):
         else:
             print("⚠️ No 'Photos from YYYY' folders found. Skipping cleanup.")
 
-        # Log extraction
+        # Create a log entry noting that this ZIP has been processed
         TRACKER_DIR.mkdir(parents=True, exist_ok=True)
         tracker_file = TRACKER_DIR / (zip_file.stem + ".txt")
         tracker_file.write_text(f"Extracted: {zip_file.name}\n", encoding="utf-8")
         print(f"📄 Created tracker log at: {tracker_file}")
 
-        # Rename to Z###
+        # Rename the ZIP file to follow the standard format with a 'Z' prefix
         new_zip_path = zip_file.with_name(standard_name)
         if not new_zip_path.exists():
             zip_file.rename(new_zip_path)

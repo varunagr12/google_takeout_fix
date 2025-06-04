@@ -1,4 +1,5 @@
 #!/usr/bin/env python
+# source ~/dedup-venv/bin/activate
 
 # I'm not completely sure what is causing the issue.
 """

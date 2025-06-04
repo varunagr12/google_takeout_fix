@@ -10,18 +10,17 @@ import cv2
 from pillow_heif import register_heif_opener
 register_heif_opener()
 
-# Configurations
+# Basic settings and configuration options
 UNMATCHED_ROOT = Path(r"C:\Users\vagrawal\OneDrive - Altair Engineering, Inc\Documents\Personal\Pictures\Processing\__UNMATCHED_MEDIA__")
 PROCESSING_ROOT = Path(r"C:\Users\vagrawal\OneDrive - Altair Engineering, Inc\Documents\Personal\Pictures\Processing")
-HASH_THRESHOLD = 15  # Adjust as needed
-DRY_RUN = True  # Set to False to apply changes
+HASH_THRESHOLD = 15  # Can tweak this value to adjust how similar images need to be to count as a near match
+DRY_RUN = True 
 processed_files = []
 duplicates_found = []
 
-# Supported file types
+# File type definitions for images and videos
 IMAGE_EXTS = {'.jpg', '.jpeg', '.png', '.heic'}
 VIDEO_EXTS = {'.mp4', '.mov', '.avi', '.mkv'}
-
 
 def compute_hash(path):
     ext = path.suffix.lower()
@@ -42,15 +41,15 @@ def compute_hash(path):
         print(f"Hash error for {path}: {e}")
     return None
 
-
 def get_year_from_path(path):
+    # Traverse the parent directories to find a folder starting with "photos from "
     for parent in path.parents:
         if parent.name.lower().startswith("photos from "):
             return parent.name
     return None
 
-
 def get_all_year_folders(year_name):
+    # Look for folders matching the pattern within the processing root
     year_folders = []
     for zfolder in PROCESSING_ROOT.iterdir():
         if zfolder.is_dir() and zfolder.name.lower().startswith("z") and not zfolder.name.startswith("_"):
@@ -59,8 +58,8 @@ def get_all_year_folders(year_name):
                 year_folders.append(year_path)
     return year_folders
 
-
 def get_timestamp_from_exif(image_path):
+    # Try to extract the original timestamp from the image's EXIF data
     try:
         exif = piexif.load(image_path)
         ts = exif["Exif"].get(piexif.ExifIFD.DateTimeOriginal) or exif["0th"].get(piexif.ImageIFD.DateTime)
@@ -70,8 +69,8 @@ def get_timestamp_from_exif(image_path):
         return None
     return None
 
-
 def set_timestamp_to_exif(image_path, timestamp):
+    # Update the image's EXIF data with a new timestamp
     try:
         exif = piexif.load(image_path)
         encoded_ts = timestamp.encode("utf-8")
@@ -84,8 +83,8 @@ def set_timestamp_to_exif(image_path, timestamp):
         print(f"Failed to set timestamp for {image_path}: {e}")
         return False
 
-
 def match_unmatched_images():
+    # Find all unmatched files in the specified directory, excluding any in masked folders
     unmatched_files = [f for f in UNMATCHED_ROOT.rglob("*") if f.is_file() and not any(p.name.startswith("_") and not p.name.startswith("__") for p in f.parents)]
     print(f"\nFound {len(unmatched_files)} unmatched files to process.\n")
 
@@ -119,7 +118,7 @@ def match_unmatched_images():
                         best_match = cfile
                         best_dist = dist
 
-        # Sort and log near matches
+        # Organize and display the closest matches
         near_matches.sort(key=lambda x: x[1])
         print(f"🔍 Near matches for {ufile.name}:")
         for nm, dist in near_matches[:5]:
@@ -127,7 +126,7 @@ def match_unmatched_images():
 
         if best_match:
             if best_dist == 0:
-                # Exact duplicate: delete the unmatched file
+                # If the file is an exact duplicate, remove the unmatched one
                 if DRY_RUN:
                     print(f"🗑️ Would delete {ufile} (exact duplicate of {best_match})")
                 else:
@@ -138,7 +137,7 @@ def match_unmatched_images():
                         print(f"Error deleting {ufile}: {e}")
                 duplicates_found.append({"unmatched": str(ufile), "match": str(best_match)})
             elif best_dist <= HASH_THRESHOLD:
-                # Near match: move and update timestamp
+                # If the file is a near match, prepare to move it and adjust the timestamp
                 timestamp = get_timestamp_from_exif(str(best_match)) if best_match.suffix.lower() in IMAGE_EXTS else None
                 new_name = f"{ufile.stem}_sim{ufile.suffix}"
                 dest_path = best_match.parent / new_name
@@ -165,8 +164,8 @@ def match_unmatched_images():
 
     print_summary()
 
-
 def print_summary():
+    # Show a summary report of what was processed or what would be processed
     if DRY_RUN:
         print(f"\n📋 Dry-run summary:")
     else:
@@ -179,7 +178,6 @@ def print_summary():
     print(f"\n🗑️ Exact duplicates found: {len(duplicates_found)}")
     for entry in duplicates_found:
         print(f"- {entry['unmatched']} (duplicate of {entry['match']})")
-
 
 if __name__ == "__main__":
     match_unmatched_images()
