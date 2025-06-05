@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # source ~/dedup-venv/bin/activate
 
-# I'm not completely sure what is causing the issue.
+# I need to revert back to some older script. I dont think I can use any GPU for images which sucks. but I need to still do phash and such. somehow fix this stupid mess.
 """
 Hybrid GPU/CPU Media Duplicate Remover
     • Computes a SHA-1 hash based on the image's raw RGB pixels (with orientation correction)
@@ -17,6 +17,7 @@ import csv, hashlib, io, os, shutil, argparse, time, subprocess, json, math
 from pathlib import Path
 from tqdm import tqdm
 from PIL import Image, ImageOps, ImageChops
+from pillow_heif import register_heif_opener
 import numpy as np
 import concurrent.futures as cf
 import cv2, imagehash
@@ -116,7 +117,7 @@ def img_phash_int_gpu(p: Path) -> int:
         return int("".join("1" if b else "0" for b in bits), 2)
 
 # Select GPU-based pHash if available, otherwise use the CPU
-PHASH_FN = img_phash_int_gpu if HAVE_CUDA_PHASH else img_phash_int_cpu
+PHASH_FN = img_phash_int_cpu
 if HAVE_CUDA_PHASH:
         print("🟢  GPU pHash enabled (CuPy/cuCIM)")
 
