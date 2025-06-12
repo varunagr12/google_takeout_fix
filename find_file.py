@@ -53,3 +53,22 @@ def main():
 
 if __name__ == '__main__':
     main()
+
+'''
+**Usage (1 sentence)**
+Run `python find_file.py <substring_or_filename> [--exact]` to recursively search both the external `D:\` drive and the main *Processing* tree—plus the contents of every ZIP it encounters—for any file whose name matches (or exactly equals) the given pattern.
+
+---
+
+### Tools / Technologies employed
+
+* **Python 3.x standard library** – `os.walk` for directory traversal, `pathlib` for OS-agnostic paths, `zipfile` for reading archive contents, and `sys` for minimal CLI parsing.
+* **Windows-aware search roots** – pre-defined list of absolute paths so the script can sweep a whole drive and your curated photo archive in one pass.
+* **Corrupted-ZIP handling** – graceful skip with a warning to avoid crashes when an archive is damaged.
+
+---
+
+### Idea summary (what it does & why it matters)
+
+`find_file.py` is a Swiss-army locator that answers “Where did that file go?” across millions of photos and archives. By checking both live directories **and** drilling into every `.zip`, it can track down originals, renamed copies, or stray metadata without unpacking everything first. The optional `--exact` flag switches between substring discovery and strict filename equality, while clear emoji-tagged logs show progress and alert you to unreadable archives. This quick command-line utility saves minutes (or hours) of manual digging whenever a file referenced in the manifest or log can’t be found, tightening the feedback loop during debugging and data recovery.
+'''

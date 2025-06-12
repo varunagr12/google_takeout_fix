@@ -10,10 +10,10 @@ import cv2
 from pillow_heif import register_heif_opener
 register_heif_opener()
 
-# Basic settings and configuration options
-UNMATCHED_ROOT = Path(r"C:\Users\vagrawal\OneDrive - Altair Engineering, Inc\Documents\Personal\Pictures\Processing\__UNMATCHED_MEDIA__")
-PROCESSING_ROOT = Path(r"C:\Users\vagrawal\OneDrive - Altair Engineering, Inc\Documents\Personal\Pictures\Processing")
-HASH_THRESHOLD = 15  # Can tweak this value to adjust how similar images need to be to count as a near match
+# Basic settings and configuration options with updated paths for WSL
+UNMATCHED_ROOT = Path("/mnt/c/Users/vagrawal/OneDrive - Altair Engineering, Inc/Documents/Personal/Pictures/Processing/__UNMATCHED_MEDIA__")
+PROCESSING_ROOT = Path("/mnt/c/Users/vagrawal/OneDrive - Altair Engineering, Inc/Documents/Personal/Pictures/Processing")
+HASH_THRESHOLD = 15  # Adjust this value to tweak similarity matching
 DRY_RUN = True 
 processed_files = []
 duplicates_found = []
@@ -158,7 +158,6 @@ def match_unmatched_images():
                         print(f"✅ Moved and timestamp set: {dest_path}")
                     except Exception as e:
                         print(f"Error processing {ufile}: {e}")
-
             else:
                 print(f"❌ No good match for {ufile} (best distance {best_dist})")
 
@@ -181,3 +180,37 @@ def print_summary():
 
 if __name__ == "__main__":
     match_unmatched_images()
+
+
+'''
+**Usage (1 sentence)**
+Run `python sim_metadata.py [edit DRY_RUN flag]` to scan every file stranded in `__UNMATCHED_MEDIA__`, compute perceptual hashes, hunt for the closest match inside the proper *Photos from YYYY* folders, and—if the distance is 0 or below the adjustable threshold—either delete the duplicate or move it next to its twin while propagating the timestamp into its EXIF.
+
+---
+
+### Tools / Technologies employed
+
+| Layer                       | Components                                  | Purpose                                          |
+| --------------------------- | ------------------------------------------- | ------------------------------------------------ |
+| **Python 3.x std-lib**      | `pathlib`, `shutil`, `os`, `subprocess`     | Cross-platform paths, safe moves, deletions      |
+| **Pillow (+ pillow\_heif)** | Image loading for JPEG/PNG/HEIC             | Uniform RGB ingestion across formats             |
+| **imagehash (pHash)**       | 64-bit perceptual hashes + Hamming distance | Measures visual similarity between files         |
+| **OpenCV**                  | Grabs first frame of each video             | Extends perceptual hashing to video content      |
+| **piexif**                  | EXIF read/write                             | Copies original timestamp into new *\_sim* image |
+| **tqdm**                    | Progress bars                               | Feedback during large scans                      |
+| **Config flags**            | `DRY_RUN`, `HASH_THRESHOLD`                 | Risk-free preview + tunable sensitivity          |
+
+---
+
+### Idea summary (what it does & why it matters)
+
+`sim_metadata.py` is the intelligent reconciliation pass that cleans up whatever the earlier manifest-driven pipeline still couldn’t place:
+
+1. **Deep search arena** – for each unmatched asset it derives its *“Photos from YYYY”* year from the path and limits the hash search to that year, making the process fast and context-aware.
+2. **Cross-media hashing** – uses a perceptual hash for images and a grayscale hash on the first video frame, yielding a uniform 0-to-64 Hamming distance metric for both photos and clips.
+3. **Exact duplicates (distance 0)** – the unmatched file is simply deleted (or “would be” in dry-run), logging the action.
+4. **Near matches (≤ threshold)** – the file is renamed with a `_sim` suffix, moved into the matched photo’s folder, and—if it’s an image—its EXIF timestamp is copied from the canonical file so it slots perfectly into chronological views.
+5. **Detailed reporting** – both exact duplicates and near-match moves are summarized at the end (or previewed in dry-run), letting the user validate actions before committing.
+
+By combining perceptual hashing, year-scoped searches, and automatic timestamp propagation, this script salvages burst shots, slight edits, or format conversions that escaped the main deduplication manifest, ensuring every surviving file has a logical home and coherent metadata in the archive.
+'''

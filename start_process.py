@@ -92,3 +92,18 @@ def main():
 
 if __name__ == "__main__":
     main()
+'''
+**Usage (1-sentence)**
+Run this script on a Windows workstation to automatically pull every new Google-Takeout ZIP in `D:\Zipped`, extract it into a standardized `Z###` sub-folder under your Processing directory, prune irrelevant folders, and log/rename the original archive so you always know what has already been ingested.
+
+**Tools / Technologies employed**
+
+* **Python 3.10+** – `pathlib`, `os`, `subprocess`, `shutil`, `re` for cross-platform filesystem manipulation, process execution, and regex parsing.
+* **7-Zip CLI (`7z.exe`)** – fast, scriptable extraction of large ZIP archives.
+* **Windows-style absolute paths** and WSL-compatible UNC handling (Path objects).
+* Lightweight **tracker logs** as plain-text files to mark processed archives.
+
+**Idea summary (what it does & why it matters)**
+`start_process.py` forms the first stage of the media-cleanup pipeline: it scans a designated “incoming” folder for raw Google Takeout ZIPs that haven’t yet been prefixed with a `Z###` code, then (1) extracts each archive via 7-Zip into a uniquely named processing sub-tree, (2) dives down to locate the deepest “Photos from YYYY” directory so that only year-structured content is retained, deleting any extraneous folders that clutter the export, (3) creates a tracker file so the pipeline never double-processes the same archive, and finally (4) renames the original ZIP to the canonical `Z###.zip` pattern to signal completion. This automated normalization and bookkeeping step ensures the downstream hashing, deduplication, and metadata-repair stages receive clean, consistently organized inputs, eliminating manual oversight and dramatically reducing the risk of missed or duplicate photo sets.
+
+'''

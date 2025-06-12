@@ -3,10 +3,10 @@ from pathlib import Path
 from tqdm import tqdm
 
 # Configuration settings
-MANIFEST_FILE = Path(r"C:\Users\vagrawal\OneDrive - Altair Engineering, Inc\Documents\Personal\Code\metadata_manifest.csv")
-PROCESSING_ROOT = Path(r"C:\Users\vagrawal\OneDrive - Altair Engineering, Inc\Documents\Personal\Pictures\Processing")
+MANIFEST_FILE = Path("/mnt/c/Users/vagrawal/OneDrive - Altair Engineering, Inc/Documents/Personal/Code/metadata_manifest.csv")
+PROCESSING_ROOT = Path("/mnt/c/Users/vagrawal/OneDrive - Altair Engineering, Inc/Documents/Personal/Pictures/Processing")
 UNMATCHED_PREFIX = PROCESSING_ROOT / "__UNMATCHED_MEDIA__"
-DRY_RUN = False 
+DRY_RUN = True 
 
 def fix_media_path(row):
     media_path = Path(row.get("media_path", ""))
@@ -53,3 +53,17 @@ def update_manifest():
 
 if __name__ == "__main__":
     update_manifest()
+
+'''
+**Usage (1 sentence)**
+Run this helper after any bulk moves to `__UNMATCHED_MEDIA__` to sweep `metadata_manifest.csv`, rebuild broken `media_path`s for rows flagged *unmatched\_media*, and—when you flip `DRY_RUN = False`—persist those fixes in-place.
+
+**Tools / Technologies employed**
+
+* **Python 3.10+ standard library** – `csv`, `pathlib`, built-in iteration for manifest parsing and path reconstruction.
+* **tqdm** – progress-bar visualization over tens-of-thousands of manifest rows.
+* **Dry-run toggle** – lightweight safety valve to preview edits before committing.
+
+**Idea summary (what it does & why it matters)**
+`update_unmatched_path.py` is the manifest-maintenance mop-up: after earlier steps shove orphaned media into a flattened `__UNMATCHED_MEDIA__` vault, the CSV can still contain stale absolute paths. This script programmatically rebuilds each broken path by slicing from the first *Z###* directory, discarding noisy “Takeout/Google Photos” segments, and grafting the remainder onto the central unmatched prefix. It tags every would-be change in the `notes` column for transparency, then—outside dry-run mode—writes the corrections back to disk. The result is a self-healing manifest where every record, even those awaiting manual review, cleanly resolves to a real file, eliminating 404-style hiccups in downstream analytics or UI tooling.
+'''

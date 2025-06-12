@@ -12,16 +12,16 @@ MOVE_UNMATCHED = True
 UNMATCHED_JSON_DIR = "__UNMATCHED_JSON__"
 UNMATCHED_MEDIA_DIR = "__UNMATCHED_MEDIA__"
 
-def move_file_safely(file_path, unmatched_root, root_prefix="Z"):
+def move_file_safely(file_path, unmatched_root, root_prefix="mnt"):
     try:
         src = Path(file_path).resolve()
         unmatched_root = Path(unmatched_root).resolve()
         parts = src.parts
         try:
-            z_index = next(i for i, p in enumerate(parts) if Path(p).name.upper().startswith(root_prefix))
+            mnt_index = next(i for i, p in enumerate(parts) if Path(p).name.lower().startswith(root_prefix))
         except StopIteration:
             raise ValueError(f"No parent folder starting with '{root_prefix}' found in path: {src}")
-        rel_parts = parts[z_index:]
+        rel_parts = parts[mnt_index:]
         filtered_parts = [rel_parts[0]]
         filtered_parts += [p for p in rel_parts[1:] if p.lower() not in {'takeout', 'google photos'}]
         dst_path = unmatched_root.joinpath(*filtered_parts)
@@ -146,5 +146,21 @@ def scan_and_generate_manifest(root_path):
         print("No entries to write.")
 
 if __name__ == '__main__':
-    target = r"C:\Users\vagrawal\OneDrive - Altair Engineering, Inc\Documents\Personal\Pictures\Processing"
+    target = "/mnt/c/Users/vagrawal/OneDrive - Altair Engineering, Inc/Documents/Personal/Pictures/Processing"
     scan_and_generate_manifest(target)
+
+'''
+**Usage (1 sentence)**
+Run this script immediately after the ZIP-extraction stage to crawl the *Processing* tree, pair each Google-Takeout JSON metadata file with its corresponding photo/video, quarantine anything that lacks a match, and export a master `metadata_manifest.csv` for all downstream automation.
+
+**Tools / Technologies employed**
+
+* **Python 3.10+ Standard Library**: `pathlib`, `os.walk`, `csv`, `json`, `datetime`, `re`, `shutil` for filesystem traversal, parsing, timestamp conversion, and safe moves.
+* **tqdm** progress bars for real-time feedback on large datasets.
+* **POSIX / WSL path semantics** for seamless Windows↔Linux handling.
+* **CSV schema** (with rich columns: row\_type, paths, Unix & formatted timestamps, notes) to drive later pipelines.
+
+**Idea summary (what it does & why it does it)**
+`manifest.py` is the cataloging nucleus of the project: it systematically scans every file in the processing hierarchy, uses a regex heuristic to link *IMG\_1234.jpg*–style media with their `IMG_1234.jpg.json` companions, and records successful matches—including the original Unix timestamp extracted from `photoTakenTime`. Any orphaned JSON or media is automatically moved into dedicated `__UNMATCHED_JSON__` or `__UNMATCHED_MEDIA__` zones (with de-duplicating renames), ensuring a clean workspace and an explicit audit trail. The resulting manifest becomes a single source-of-truth for later steps such as perceptual-hash deduplication, timestamp correction, and archival: every file’s status (matched, unmatched, moved) and key metadata live in one structured CSV, eliminating guesswork and enabling reproducible, script-driven photo curation at scale.
+
+'''

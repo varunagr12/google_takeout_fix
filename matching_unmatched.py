@@ -5,14 +5,14 @@ from pathlib import Path
 from tqdm import tqdm
 
 # Configuration settings used by this script.
-# PRE_METADATA_DIR = Path(r"D:\pre-metadata")
-PRE_METADATA_DIR = Path(r"C:\Users\vagrawal\OneDrive - Altair Engineering, Inc\Documents\Personal\Pictures\Processing")
+# PRE_METADATA_DIR = Path(r"/mnt/d/pre-metadata")
+PRE_METADATA_DIR = Path(r"/mnt/c/Users/vagrawal/OneDrive - Altair Engineering, Inc/Documents/Personal/Pictures/Processing")
 UNMATCHED_JSON_DIR = PRE_METADATA_DIR / "__UNMATCHED_JSON__"
 UNMATCHED_MEDIA_DIR = PRE_METADATA_DIR / "__UNMATCHED_MEDIA__"
 # MANIFEST_FILE = PRE_METADATA_DIR / "metadata_manifest.csv"
-MANIFEST_FILE = Path(r"C:\Users\vagrawal\OneDrive - Altair Engineering, Inc\Documents\Personal\Code\metadata_manifest.csv")
+MANIFEST_FILE = Path(r"/mnt/c/Users/vagrawal/OneDrive - Altair Engineering, Inc/Documents/Personal/Code/metadata_manifest.csv")
 
-DRYRUN = True  
+DRYRUN = False  
 
 # This helper function tries to match a JSON file with a media file using fuzzy logic.
 def match_json_to_media(json_name, media_names):
@@ -80,3 +80,22 @@ if not DRYRUN:
     print(f"Updated {updated_rows} rows in manifest.")
 else:
     print(f"[DRYRUN] {updated_rows} rows would be updated.")
+
+'''
+**Usage (1 sentence)**
+Run this utility after the initial quarantine stage to crawl the `__UNMATCHED_JSON__` and `__UNMATCHED_MEDIA__` vaults, fuzz-match orphaned Google-Takeout JSONs to their media twins, move both back into the canonical `Z###/Takeout/Google Photos/…` tree, and patch the corresponding rows in `metadata_manifest.csv` (with `DRYRUN=True` first for a safe preview).
+
+**Tools / Technologies employed**
+
+* **Python 3.10+** standard library: `csv`, `pathlib`, `re`, `shutil` for manifest editing, path maths, regex-based fuzzy matching, and atomic file moves.
+* **tqdm** progress bars for visual feedback on large unmatched sets.
+* **Dry-run toggle** to simulate all moves and manifest rewrites without touching disk.
+
+**Idea summary (what it does & why it matters)**
+`matching_unmatched.py` is the recovery engine that salvages missed pairings left behind by earlier ingestion steps. It first enumerates every JSON under `__UNMATCHED_JSON__` and builds a filename-cleaned hash (letters + digits only). Using the same sanitization on each media file name in `__UNMATCHED_MEDIA__`, it performs a simple but effective fuzzy equality/containment check to find likely matches that differ only by punctuation, spaces, or trailing duplicates. When a match is found the script:
+
+1. **Restores original hierarchy** – moves both JSON and media back into their rightful `Z###/Takeout/Google Photos/…` location, recreating folders as needed.
+2. **Repairs the manifest** – switches the row’s `row_type` to `matched`, updates JSON / media / corrected paths, and annotates the action with a “Recovered match” note.
+
+Because all actions are logged—and optionally simulated—the script provides a low-risk, high-reward sweep that dramatically reduces manual triage, ensuring every asset and its metadata wind up reunited before the hashing, deduplication, and timestamp-correction phases proceed.
+'''

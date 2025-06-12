@@ -39,3 +39,22 @@ def count_column_values(csv_path, columns):
             print(f"{val} {cnt}/{total[col]}")
 
 count_column_values(CSV_PATH, COLUMNS)
+
+'''
+**Usage (1 sentence)**
+Run `python count_metadata.py` at any point to generate a quick, human-readable tally of how many rows in `metadata_manifest.csv` contain each common “action\_taken” or “notes” event—e.g., “Converted HEIC to JPEG,” “Timestamp updated,” “Moved to failed,” etc.—so you can gauge pipeline activity and error prevalence at a glance.
+
+---
+
+### Tools / Technologies employed
+
+* **Python 3.x standard library** – `csv` for manifest reading, `re` for regex pattern matching, `collections.Counter` for frequency counts, and `pathlib` for path handling.
+* **Simplification map** – configurable `PATTERNS` list that collapses verbose log strings into concise, analyst-friendly labels.
+* **Terminal-friendly output** – prints counts in “value count/total” format with no external dependencies.
+
+---
+
+### Idea summary (what it does & why it matters)
+
+`count_metadata.py` is the pipeline’s analytics heartbeat: by scanning the manifest’s `action_taken` and `notes` columns, normalizing each entry to a handful of canonical categories, and displaying ranked counts, it offers an instant snapshot of pipeline progress (“how many files got timestamps?”), conversion workload (“how many HEIC→JPEG”), and outstanding issues (“JSON rename failed”). This lightweight audit helps you spot systemic problems, measure the impact of each processing stage, and present clear metrics in your white-paper without firing up a full BI tool.
+'''
