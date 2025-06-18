@@ -1,27 +1,27 @@
 #!/usr/bin/env python3
 
-
 '''
 Results of test:
-MTS to MOV doesnt work, metadata does not update and have this error: cant play audio it is encoded with a codec AC-3 that is not supported by the player.
-3pg wasn't even converted? Not sure what happened there. 
-jfif worked
+MTS works
+3pg works
+jfif converted but didnt add any metadata
 jpg worked
-jpg converted to mov (it is a video) but there is no metadata
+avi worked
 tif worked
 nef worked
 thm sort of worked? it is very small but has right metadata
 heic worked
-mov sort of worked? it only has year.
+mov worked
 dng worked
 webp worked
 jpeg worked
 tiff worked
-mpg converted to mov but there is no metadata (no year)
-mp4 there is no metadata
+mpg worked
+mp4 worked
 png worked
-gif not sure what happened, it is a still image - no conversions and no metadata
+gif worked
 '''
+
 import argparse
 import csv
 import os
@@ -43,11 +43,15 @@ ImageFile.LOAD_TRUNCATED_IMAGES = True
 # Initialize HEIC opener
 register_heif_opener()
 
+# Simple logger for error messages
+def log(msg):
+    print(msg)
+
 # Configuration
 MANIFEST_PATH = Path(r"/mnt/c/Users/vagrawal/OneDrive - Altair Engineering, Inc/Documents/Personal/Code/metadata_manifest.csv")
 PROCESSING_ROOT = Path(r"/mnt/c/Users/vagrawal/OneDrive - Altair Engineering, Inc/Documents/Personal/Pictures/Processing")
 FAILED_DIR_NAME = "__FAILED_FILES__"
-VIDEO_TARGET_EXTS = {".avi", ".mpg", ".mpeg", ".mts"}
+VIDEO_TARGET_EXTS = {".avi", ".mpg", ".mpeg", ".mts", ".3gp"}
 
 # Extensions to sample in --test mode
 SAMPLE_EXTS = [
@@ -62,6 +66,18 @@ SAMPLE_EXTS = [
 # ----------------------------------------------------------------------------
 # Helper functions
 # ----------------------------------------------------------------------------
+
+def append_action(row: dict, text: str):
+    """
+    Safely append to row['action_taken']:
+      - if empty       → "text"
+      - otherwise      → existing + "; text"
+    """
+    prev = row.get('action_taken', '').strip()
+    if prev:
+        row['action_taken'] = f"{prev}; {text}"
+    else:
+        row['action_taken'] = text
 
 def get_safe_conversion_path(original_path: Path) -> Path:
     stem, suffix, parent = original_path.stem, original_path.suffix, original_path.parent
@@ -125,6 +141,11 @@ def convert_png_to_jpg(png_path: str) -> str:
         jpg = Path(png_path).with_suffix('.jpg')
         safe = get_safe_conversion_path(jpg)
         background.save(safe, 'JPEG', quality=95)
+        # delete original PNG
+        try:
+            os.remove(png_path)
+        except OSError:
+            pass
         return str(safe)
     except Exception as e:
         move_to_failed(png_path, f"PNG→JPEG error: {e}")
@@ -137,6 +158,11 @@ def convert_heic_to_jpg(heic_path: str) -> str:
         jpg = Path(heic_path).with_suffix('.jpg')
         safe = get_safe_conversion_path(jpg)
         img.save(safe, 'JPEG')
+        # delete original HEIC
+        try:
+            os.remove(heic_path)
+        except OSError:
+            pass
         return str(safe)
     except Exception as e:
         move_to_failed(heic_path, f"HEIC→JPEG error: {e}")
@@ -150,27 +176,46 @@ def convert_dng_to_jpg(dng_path: str) -> str:
         with rawpy.imread(dng_path) as raw:
             rgb = raw.postprocess()
         imageio.imwrite(str(safe), rgb)
+        # delete original DNG
+        try:
+            os.remove(dng_path)
+        except OSError:
+            pass
         return str(safe)
     except Exception as e:
         move_to_failed(dng_path, f"DNG→JPEG error: {e}")
         return dng_path
 
 
-def convert_to_mov(input_path: Path, output_path: Path) -> bool:
+def convert_to_mov(input_path: Path,
+                   output_path: Path,
+                   formatted_time: str = None) -> bool:
+    """
+    • copy video
+    • re-encode audio → AAC
+    • add faststart + optional creation_time
+    """
     try:
         if output_path.exists():
             output_path.unlink()
-        res = subprocess.run([
-            'ffmpeg','-y','-loglevel','error','-i', str(input_path), '-c','copy', str(output_path)
-        ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        if res.returncode == 0:
-            return True
-        res = subprocess.run([
-            'ffmpeg','-y','-loglevel','error','-i', str(input_path),
-            '-c:v','libx264','-preset','medium','-crf','18',
-            '-c:a','aac','-b:a','192k','-movflags','+faststart', str(output_path)
-        ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        return res.returncode == 0
+
+        cmd = [
+            "ffmpeg", "-y", "-loglevel", "error",
+            "-i", str(input_path),
+            "-c:v", "copy",
+            "-c:a", "aac", "-b:a", "192k",
+            "-movflags", "+faststart",
+        ]
+        if formatted_time:
+            # “YYYY:MM:DD HH:MM:SS” → “YYYY-MM-DDTHH:MM:SS”
+            from datetime import datetime
+            iso = datetime.strptime(formatted_time, "%Y:%m:%d %H:%M:%S") \
+                        .strftime("%Y-%m-%dT%H:%M:%S")
+            cmd += ["-metadata", f"creation_time={iso}"]
+
+        cmd.append(str(output_path))
+        return subprocess.run(cmd, stdout=subprocess.DEVNULL,
+                               stderr=subprocess.DEVNULL).returncode == 0
     except:
         return False
 
@@ -180,8 +225,8 @@ def handle_video_conversion(media_path: Path, json_path: Path, row: dict):
     if ext not in VIDEO_TARGET_EXTS:
         return media_path, json_path
     old = media_path.name
-    mov = get_safe_conversion_path(media_path.with_suffix('.mov'))
-    if not convert_to_mov(media_path, mov):
+    mov = get_safe_conversion_path(media_path.with_suffix('.mp4'))
+    if not convert_to_mov(media_path, mov, row['formatted_time']):
         moved, reason = move_to_failed(str(media_path), 'Video conversion failed')
         row['notes'] = reason
         return media_path, json_path
@@ -191,7 +236,7 @@ def handle_video_conversion(media_path: Path, json_path: Path, row: dict):
     row['media_path'] = str(mov)
     row['corrected_path'] = str(mov)
     row['new_ext'] = '.mov'
-    row['action_taken'] += f"; Converted {ext}→MOV"
+    append_action(row, f"Converted {ext} -> MOV")
     new_name = json_path.name.replace(old, mov.name)
     new_json = get_safe_conversion_path(json_path.with_name(new_name))
     try:
@@ -204,26 +249,80 @@ def handle_video_conversion(media_path: Path, json_path: Path, row: dict):
 
 
 def update_timestamp(file_path: str, formatted_time: str):
+    """
+    • JPEG/.jpeg → exiftool
+    • MOV/.mp4  → exiftool (QuickTime tags)
+    • everything else → exiftool (generic tags)
+    Returns (success: bool, message: str).
+    """
+    from pathlib import Path
+
     ext = Path(file_path).suffix.lower()
     try:
-        if ext in ('.jpg','.jpeg'):
-            exif = piexif.load(file_path)
-            ts = formatted_time.encode()
-            exif['Exif'][piexif.ExifIFD.DateTimeOriginal] = ts
-            exif['Exif'][piexif.ExifIFD.DateTimeDigitized] = ts
-            exif['0th'][piexif.ImageIFD.DateTime] = ts
-            piexif.insert(piexif.dump(exif), file_path)
-        else:
-            subprocess.run([
+        # JPEG images: write EXIF via ExifTool
+        if ext in ('.jpg', '.jpeg'):
+            cmd = [
                 'exiftool', '-overwrite_original',
                 f'-DateTimeOriginal={formatted_time}',
                 f'-CreateDate={formatted_time}',
-                f'-ModifyDate={formatted_time}', file_path
-            ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        return True, 'Timestamp updated'
+                f'-ModifyDate={formatted_time}',
+                file_path
+            ]
+            res = subprocess.run(cmd, stdout=subprocess.PIPE,
+                                 stderr=subprocess.PIPE, text=True)
+            if res.returncode != 0:
+                raise RuntimeError(res.stderr.strip())
+            return True, 'Timestamp updated (ExifTool JPEG)'
+
+        # MOV/MP4: QuickTime atoms
+        if ext in ('.mov', '.mp4'):
+            cmd = [
+                'exiftool', '-overwrite_original',
+                f'-MediaCreateDate={formatted_time}',
+                f'-CreateDate={formatted_time}',
+                f'-ModifyDate={formatted_time}',
+                file_path
+            ]
+            res = subprocess.run(cmd, stdout=subprocess.PIPE,
+                                 stderr=subprocess.PIPE, text=True)
+            if res.returncode != 0:
+                raise RuntimeError(res.stderr.strip())
+            return True, 'Timestamp updated (ExifTool MOV/MP4)'
+
+        # Fallback for any other file types
+        cmd = [
+            'exiftool', '-overwrite_original',
+            f'-DateTimeOriginal={formatted_time}',
+            f'-CreateDate={formatted_time}',
+            f'-ModifyDate={formatted_time}',
+            file_path
+        ]
+        res = subprocess.run(cmd, stdout=subprocess.PIPE,
+                             stderr=subprocess.PIPE, text=True)
+        if res.returncode != 0:
+            raise RuntimeError(res.stderr.strip())
+        return True, 'Timestamp updated (ExifTool)'
     except Exception as e:
-        moved, reason = move_to_failed(file_path, f"Timestamp failed: {e}")
+        log(f"❌ Timestamp update failed for {file_path}: {e}")
+        moved, reason = move_to_failed(file_path, f"Timestamp update failed: {e}")
         return False, reason
+
+def write_manifest(rows, path=MANIFEST_PATH):
+    import csv
+    # 1) read original header order
+    with path.open('r', newline='', encoding='utf-8') as f:
+        orig = csv.DictReader(f).fieldnames or []
+    # 2) append any new keys (preserves orig order)
+    fieldnames = orig.copy()
+    for r in rows:
+        for k in r:
+            if k not in fieldnames:
+                fieldnames.append(k)
+    # 3) write out with stable ordering
+    with path.open('w', newline='', encoding='utf-8') as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(rows)
 
 # ----------------------------------------------------------------------------
 # Pipeline steps
@@ -238,13 +337,13 @@ def convert_media(row: dict) -> dict:
         old = path.name
         path = Path(corrected)
         row.update(media_path=str(path), corrected_path=str(path), new_ext=new_ext)
-        row['action_taken'] += f"; Renamed {old}→{path.name}"
+        append_action(row, f"Renamed {old} -> {path.name}")
     if ext == '.png': new = convert_png_to_jpg(str(path))
     elif ext == '.heic': new = convert_heic_to_jpg(str(path))
     elif ext == '.dng': new = convert_dng_to_jpg(str(path))
     else: new = str(path)
     if new != str(path):
-        row['action_taken'] += f"; Converted {ext}→{Path(new).suffix}"
+        append_action(row, f"Converted {ext} -> {Path(new).suffix}")
         row['media_path'] = new
     return row
 
@@ -259,17 +358,32 @@ def convert_videos(row: dict) -> dict:
 
 
 def update_all_timestamps(row: dict) -> dict:
-    ok, msg = update_timestamp(row['media_path'], row['formatted_time'])
-    if ok: row['action_taken'] += f"; {msg}"
-    else: row['notes'] = msg
+    from pathlib import Path
+
+    fp = row.get('media_path', '')
+    row.setdefault('action_taken', '')
+    row.setdefault('notes', '')
+
+    if not Path(fp).exists():
+        log(f"⚠ Skipping timestamp: file not found at {fp}")
+        row['notes'] = "Skipped timestamp; file not found"
+        return row
+
+    ok, msg = update_timestamp(fp, row['formatted_time'])
+    if ok:
+        append_action(row, msg)
+    else:
+        row['notes'] = msg
     return row
 
 # ----------------------------------------------------------------------------
 # Orchestration
 # ----------------------------------------------------------------------------
 
+from concurrent.futures import ProcessPoolExecutor
+
 def run_in_parallel(fn, rows, workers, desc):
-    with ThreadPoolExecutor(max_workers=workers) as ex:
+    with ProcessPoolExecutor(max_workers=workers) as ex:
         return list(tqdm(ex.map(fn, rows), total=len(rows), desc=desc))
 
 
@@ -305,6 +419,8 @@ def main():
                 orig_m, orig_j = Path(row['media_path']), Path(row['json_path'])
                 dst_m = PROCESSING_ROOT / orig_m.name
                 dst_j = PROCESSING_ROOT / orig_j.name
+                if not orig_m.exists() or not orig_j.exists():
+                    continue
                 shutil.copy2(orig_m, dst_m)
                 shutil.copy2(orig_j, dst_j)
                 row['media_path'], row['json_path'] = str(dst_m), str(dst_j)
@@ -326,13 +442,9 @@ def main():
         rows = run_in_parallel(update_all_timestamps, rows, args.workers, 'Updating timestamps')
 
     # Write updated manifest
-    fieldnames = list({k for row in rows for k in row.keys()})
-    with MANIFEST_PATH.open('w', newline='', encoding='utf-8') as f:
-        writer = csv.DictWriter(f, fieldnames=fieldnames)
-        writer.writeheader()
-        writer.writerows(rows)
+    write_manifest(rows)
 
-    print("\n✅ Pipeline complete!")
+    print("\n✅ Stage complete!")
 
 if __name__ == '__main__':
     main()
