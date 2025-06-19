@@ -3,7 +3,7 @@ import re
 from pathlib import Path
 from collections import Counter
 
-CSV_PATH = Path(r"C:\Users\vagrawal\OneDrive - Altair Engineering, Inc\Documents\Personal\Code\metadata_manifest.csv")
+CSV_PATH = Path("/mnt/c/Users/vagrawal/OneDrive - Altair Engineering, Inc/Documents/Personal/Code/metadata_manifest.csv")
 COLUMNS = ["action_taken", "notes"]
 
 PATTERNS = [

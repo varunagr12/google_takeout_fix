@@ -12,7 +12,7 @@ UNMATCHED_MEDIA_DIR = PRE_METADATA_DIR / "__UNMATCHED_MEDIA__"
 # MANIFEST_FILE = PRE_METADATA_DIR / "metadata_manifest.csv"
 MANIFEST_FILE = Path(r"/mnt/c/Users/vagrawal/OneDrive - Altair Engineering, Inc/Documents/Personal/Code/metadata_manifest.csv")
 
-DRYRUN = False  
+DRYRUN = True  
 
 # This helper function tries to match a JSON file with a media file using fuzzy logic.
 def match_json_to_media(json_name, media_names):

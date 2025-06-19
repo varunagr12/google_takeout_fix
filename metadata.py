@@ -4,7 +4,7 @@
 Results of test:
 MTS works
 3pg works
-jfif converted but didnt add any metadata
+jfif worked
 jpg worked
 avi worked
 tif worked
@@ -12,7 +12,7 @@ nef worked
 thm sort of worked? it is very small but has right metadata
 heic worked
 mov worked
-dng worked
+dng changing the file name to add _1. 
 webp worked
 jpeg worked
 tiff worked
@@ -37,6 +37,7 @@ from PIL import Image, ImageFile
 import rawpy
 import imageio
 from pillow_heif import register_heif_opener
+from typing import Optional   
 
 # Ensure PIL can load truncated JPEGs
 ImageFile.LOAD_TRUNCATED_IMAGES = True
@@ -70,8 +71,8 @@ SAMPLE_EXTS = [
 def append_action(row: dict, text: str):
     """
     Safely append to row['action_taken']:
-      - if empty       → "text"
-      - otherwise      → existing + "; text"
+      - if empty       -> "text"
+      - otherwise      -> existing + "; text"
     """
     prev = row.get('action_taken', '').strip()
     if prev:
@@ -79,14 +80,46 @@ def append_action(row: dict, text: str):
     else:
         row['action_taken'] = text
 
-def get_safe_conversion_path(original_path: Path) -> Path:
-    stem, suffix, parent = original_path.stem, original_path.suffix, original_path.parent
-    candidate = parent / f"{stem}_conv{suffix}"
-    i = 1
-    while candidate.exists():
-        candidate = parent / f"{stem}_conv_{i}{suffix}"
-        i += 1
+from pathlib import Path
+from typing import Optional   # make sure this import is present once at the top
+
+
+
+def get_safe_conversion_path(original_path: Path,
+                             tag: str = None,
+                             allow_numbering: bool = False) -> Path:
+    stem   = original_path.stem
+    suffix = original_path.suffix
+    parent = original_path.parent
+
+    if tag and not allow_numbering:
+        # ✔ embed the tag before '_conv'
+        return parent / f"{stem}_{tag}_conv{suffix}"
+
+    base = f"{stem}_conv{suffix}"
+    candidate = parent / base
+    if not tag:                       # tag-less: keep counting until free
+        i = 1
+        while candidate.exists():
+            candidate = parent / f"{stem}_conv_{i}{suffix}"
+            i += 1
     return candidate
+
+def rename_json_file(old_json: Path, old_media_name: str, new_media_name: str):
+    """
+    Rename sidecar JSON to match a media filename change.
+    Returns (new_json_filename, new_json_path, moved_info, reason).
+    """
+    try:
+        new_name = old_json.name.replace(old_media_name, new_media_name)
+        new_path = old_json.with_name(new_name)
+        # ensure no overwrite
+        new_path = get_safe_conversion_path(new_path)
+        old_json.rename(new_path)
+        return new_name, str(new_path), None, None
+    except Exception as e:
+        moved, reason = move_to_failed(str(old_json), f"JSON rename failed: {e}")
+        return old_json.name, str(old_json), moved, reason
 
 
 def move_to_failed(file_path: str, reason: str = None):
@@ -115,75 +148,94 @@ def move_to_failed(file_path: str, reason: str = None):
 
 
 def correct_file_extension(file_path: str):
+    """
+    Identify the real file type by magic bytes, and if mislabeled:
+      • rename to the right suffix, 
+      • embed the old suffix as a tag so we never collide.
+    """
     p = Path(file_path)
     try:
         sig = p.open('rb').read(12)
-        ext = p.suffix.lower()
-        new_path = None
-        if sig.startswith(b'\xFF\xD8\xFF') and ext != '.jpg':
-            new_path = p.with_suffix('.jpg')
-        elif sig[4:8] == b'ftyp' and b'qt' in sig and ext != '.mov':
-            new_path = p.with_suffix('.mov')
-        if new_path:
-            safe = get_safe_conversion_path(new_path)
+        old_ext = p.suffix.lower()
+        new_ext = None
+
+        if sig.startswith(b'\xFF\xD8\xFF') and old_ext != '.jpg':
+            new_ext = '.jpg'
+        elif sig[4:8] == b'ftyp' and b'qt' in sig and old_ext != '.mov':
+            new_ext = '.mov'
+
+        if new_ext:
+            # tag with the old extension (no dot)
+            safe = get_safe_conversion_path(p.with_suffix(new_ext), tag=old_ext.lstrip('.'))
             p.rename(safe)
             return str(safe), safe.suffix
+
     except Exception:
         pass
+
     return file_path, p.suffix
 
 
 def convert_png_to_jpg(png_path: str) -> str:
+    orig = Path(png_path)
     try:
-        im = Image.open(png_path).convert('RGBA')
-        background = Image.new('RGB', im.size, (255, 255, 255))
-        background.paste(im, mask=im.split()[3])
-        jpg = Path(png_path).with_suffix('.jpg')
-        safe = get_safe_conversion_path(jpg)
-        background.save(safe, 'JPEG', quality=95)
-        # delete original PNG
-        try:
-            os.remove(png_path)
-        except OSError:
-            pass
+        im = Image.open(orig).convert('RGBA')
+        bg = Image.new('RGB', im.size, (255,255,255))
+        bg.paste(im, mask=im.split()[3])
+        jpg = orig.with_suffix('.jpg')
+        safe = get_safe_conversion_path(jpg, tag='png')
+        bg.save(safe, 'JPEG', quality=95)
+        orig.unlink()
         return str(safe)
     except Exception as e:
-        move_to_failed(png_path, f"PNG→JPEG error: {e}")
+        move_to_failed(png_path, f"PNG->JPEG error: {e}")
         return png_path
 
 
 def convert_heic_to_jpg(heic_path: str) -> str:
+    orig = Path(heic_path)
     try:
-        img = Image.open(heic_path).convert('RGB')
-        jpg = Path(heic_path).with_suffix('.jpg')
-        safe = get_safe_conversion_path(jpg)
+        img = Image.open(orig).convert('RGB')
+        jpg = orig.with_suffix('.jpg')
+        safe = get_safe_conversion_path(jpg, tag='heic')
         img.save(safe, 'JPEG')
-        # delete original HEIC
-        try:
-            os.remove(heic_path)
-        except OSError:
-            pass
+        orig.unlink()
         return str(safe)
     except Exception as e:
-        move_to_failed(heic_path, f"HEIC→JPEG error: {e}")
+        move_to_failed(heic_path, f"HEIC->JPEG error: {e}")
         return heic_path
 
-
 def convert_dng_to_jpg(dng_path: str) -> str:
+    """
+    .dng  ➜  .jpg   (single, tag-unique name; no extra *_1)
+    """
+    orig = Path(dng_path)
     try:
-        jpg = Path(dng_path).with_suffix('.jpg')
-        safe = get_safe_conversion_path(jpg)
-        with rawpy.imread(dng_path) as raw:
+        # final target name (unique by ‘dng’ tag)
+        final_path = get_safe_conversion_path(orig.with_suffix('.jpg'), tag='dng')
+
+        # write to a temp file in the same dir to avoid partial reads
+        import uuid, tempfile
+        tmp_fd, tmp_name = tempfile.mkstemp(
+            suffix='.jpg', prefix=f"tmp_{uuid.uuid4().hex}_", dir=str(orig.parent)
+        )
+        os.close(tmp_fd)   # we’ll reopen with PIL
+
+        # rawpy -> numpy -> PIL
+        with rawpy.imread(orig) as raw:
             rgb = raw.postprocess()
-        imageio.imwrite(str(safe), rgb)
-        # delete original DNG
-        try:
-            os.remove(dng_path)
-        except OSError:
-            pass
-        return str(safe)
+        Image.fromarray(rgb).save(tmp_name, 'JPEG', quality=95)
+
+        # atomic replace into final name
+        os.replace(tmp_name, final_path)
+
+        # remove the source .dng
+        orig.unlink()
+
+        return str(final_path)
+
     except Exception as e:
-        move_to_failed(dng_path, f"DNG→JPEG error: {e}")
+        move_to_failed(dng_path, f"DNG->JPEG error: {e}")
         return dng_path
 
 
@@ -192,7 +244,7 @@ def convert_to_mov(input_path: Path,
                    formatted_time: str = None) -> bool:
     """
     • copy video
-    • re-encode audio → AAC
+    • re-encode audio -> AAC
     • add faststart + optional creation_time
     """
     try:
@@ -207,7 +259,7 @@ def convert_to_mov(input_path: Path,
             "-movflags", "+faststart",
         ]
         if formatted_time:
-            # “YYYY:MM:DD HH:MM:SS” → “YYYY-MM-DDTHH:MM:SS”
+            # “YYYY:MM:DD HH:MM:SS” -> “YYYY-MM-DDTHH:MM:SS”
             from datetime import datetime
             iso = datetime.strptime(formatted_time, "%Y:%m:%d %H:%M:%S") \
                         .strftime("%Y-%m-%dT%H:%M:%S")
@@ -221,38 +273,41 @@ def convert_to_mov(input_path: Path,
 
 
 def handle_video_conversion(media_path: Path, json_path: Path, row: dict):
-    ext = media_path.suffix.lower()
-    if ext not in VIDEO_TARGET_EXTS:
+    old_ext = media_path.suffix.lower().lstrip('.')
+    if f".{old_ext}" not in VIDEO_TARGET_EXTS:
         return media_path, json_path
-    old = media_path.name
-    mov = get_safe_conversion_path(media_path.with_suffix('.mp4'))
+
+    old_name = media_path.name
+    # embed old_ext so .avi and .mpg don’t collide
+    mov = get_safe_conversion_path(media_path.with_suffix('.mp4'), tag=old_ext)
     if not convert_to_mov(media_path, mov, row['formatted_time']):
         moved, reason = move_to_failed(str(media_path), 'Video conversion failed')
         row['notes'] = reason
         return media_path, json_path
+
+    media_path.unlink()
+    append_action(row, f"Converted .{old_ext} -> .mp4")
+    row.update(media_path=str(mov), corrected_path=str(mov), new_ext='.mp4')
+
+    # rename JSON
+    new_json_name = json_path.name.replace(old_name, mov.name)
+    candidate = json_path.with_name(new_json_name)
+    safe_json = get_safe_conversion_path(candidate, tag=old_ext)
     try:
-        media_path.unlink()
-    except: pass
-    row['media_path'] = str(mov)
-    row['corrected_path'] = str(mov)
-    row['new_ext'] = '.mov'
-    append_action(row, f"Converted {ext} -> MOV")
-    new_name = json_path.name.replace(old, mov.name)
-    new_json = get_safe_conversion_path(json_path.with_name(new_name))
-    try:
-        json_path.rename(new_json)
-        row['json_path'] = str(new_json)
-        row['json_filename'] = new_json.name
+        json_path.rename(safe_json)
+        row['json_path']     = str(safe_json)
+        row['json_filename'] = safe_json.name
     except:
         move_to_failed(str(json_path), 'JSON rename failed')
-    return mov, new_json
+
+    return mov, Path(row['json_path'])
 
 
 def update_timestamp(file_path: str, formatted_time: str):
     """
-    • JPEG/.jpeg → exiftool
-    • MOV/.mp4  → exiftool (QuickTime tags)
-    • everything else → exiftool (generic tags)
+    • JPEG/.jpeg -> exiftool
+    • MOV/.mp4  -> exiftool (QuickTime tags)
+    • everything else -> exiftool (generic tags)
     Returns (success: bool, message: str).
     """
     from pathlib import Path
@@ -331,20 +386,35 @@ def write_manifest(rows, path=MANIFEST_PATH):
 def convert_media(row: dict) -> dict:
     path = Path(row['media_path'])
     ext = path.suffix.lower()
-    row.setdefault('action_taken','')
+    row.setdefault('action_taken', '')
+    # extension-correction
     corrected, new_ext = correct_file_extension(str(path))
     if corrected != str(path):
         old = path.name
         path = Path(corrected)
         row.update(media_path=str(path), corrected_path=str(path), new_ext=new_ext)
         append_action(row, f"Renamed {old} -> {path.name}")
-    if ext == '.png': new = convert_png_to_jpg(str(path))
+    # image-specific conversions
+    if ext == '.png':  new = convert_png_to_jpg(str(path))
     elif ext == '.heic': new = convert_heic_to_jpg(str(path))
     elif ext == '.dng': new = convert_dng_to_jpg(str(path))
     else: new = str(path)
+    # if we got a new file, update row and rename JSON
     if new != str(path):
-        append_action(row, f"Converted {ext} -> {Path(new).suffix}")
+        new_suffix = Path(new).suffix
+        append_action(row, f"Converted {ext} -> {new_suffix}")
+        old_name = path.name
         row['media_path'] = new
+        # rename JSON sidecar
+        old_json = Path(row['json_path'])
+        new_media_name = Path(new).name
+        new_json_fn, new_json_p, moved, reason = rename_json_file(old_json, old_name, new_media_name)
+        row['json_filename'] = new_json_fn
+        row['json_path'] = new_json_p
+        if moved:
+            append_action(row, f"JSON moved -> {Path(new_json_p).name}")
+        if reason:
+            row['notes'] = reason
     return row
 
 
@@ -462,8 +532,8 @@ Run `python metadata.py [--workers N] [--test] [--skip-media] [--skip-video] [--
 | **Python 3.x std-lib**      | `argparse`, `csv`, `pathlib`, `shutil`, `subprocess`, `concurrent.futures` | CLI flags, manifest I/O, safe renames/moves, FFmpeg + ExifTool calls, parallel orchestration |
 | **Pillow (+ pillow\_heif)** | RGB decoding (JPEG, PNG, HEIC), EXIF-aware orientation                     | Uniform image loading and format conversion                                                  |
 | **piexif**                  | Low-level EXIF read/write                                                  | Injects `DateTimeOriginal` into JPEG headers                                                 |
-| **rawpy + imageio**         | DNG/RAW → RGB pipeline                                                     | High-fidelity conversion of camera RAWs to JPEG                                              |
-| **FFmpeg (CLI)**            | Lossless or H.264/AAC remux of legacy videos → `.mov`                      | Modernises AVI/MPG/MTS while preserving quality                                              |
+| **rawpy + imageio**         | DNG/RAW -> RGB pipeline                                                     | High-fidelity conversion of camera RAWs to JPEG                                              |
+| **FFmpeg (CLI)**            | Lossless or H.264/AAC remux of legacy videos -> `.mov`                      | Modernises AVI/MPG/MTS while preserving quality                                              |
 | **ExifTool (CLI)**          | Timestamp writing for non-JPEG formats                                     | Consistent metadata across all media types                                                   |
 | **ThreadPoolExecutor**      | User-tunable worker pool                                                   | Parallelism that saturates I/O and CPU cores                                                 |
 | **tqdm**                    | Progress bars for each stage                                               | Real-time pipeline feedback                                                                  |
