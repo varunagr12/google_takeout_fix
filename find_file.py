@@ -4,8 +4,8 @@ import zipfile
 from pathlib import Path
 
 SEARCH_LOCATIONS = [
-    Path("D:\\"),
-    Path(r"C:\Users\vagrawal\OneDrive - Altair Engineering, Inc\Documents\Personal\Pictures\Processing")
+    # Path("/mnt/d"),
+    Path("/mnt/c/Users/vagrawal/OneDrive - Altair Engineering, Inc/Documents/Personal/Pictures/Processing")
 ]
 
 def search_file(pattern, exact=False):

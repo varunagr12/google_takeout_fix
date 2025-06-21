@@ -4,10 +4,10 @@ import shutil
 import re
 from pathlib import Path
 
-SEVEN_ZIP_EXE = r"C:\Program Files\7-Zip\7z.exe"
-ZIPPED_DIR = Path(r"D:\Zipped")
-PROCESSING_DIR = Path(r"C:\Users\vagrawal\OneDrive - Altair Engineering, Inc\Documents\Personal\Pictures\Processing")
-TRACKER_DIR = Path(r"C:\Users\vagrawal\OneDrive - Altair Engineering, Inc\Documents\Personal\Pictures\Tracker")
+SEVEN_ZIP_EXE = r"/mnt/c/Program Files/7-Zip/7z.exe"
+ZIPPED_DIR = Path("/mnt/d/Zipped")
+PROCESSING_DIR = Path("/mnt/c/Users/vagrawal/OneDrive - Altair Engineering, Inc/Documents/Personal/Pictures/Processing")
+TRACKER_DIR = Path("/mnt/c/Users/vagrawal/OneDrive - Altair Engineering, Inc/Documents/Personal/Pictures/Tracker")
 
 def is_photos_year_folder(name):
     return re.fullmatch(r"Photos from \d{4}", name.strip())

@@ -326,66 +326,6 @@ def handle_video_conversion(media_path: Path, json_path: Path, row: dict):
     return mov, Path(row['json_path'])
 
 
-def update_timestamp(file_path: str, formatted_time: str):
-    """
-    • JPEG/.jpeg -> exiftool
-    • MOV/.mp4  -> exiftool (QuickTime tags)
-    • everything else -> exiftool (generic tags)
-    Returns (success: bool, message: str).
-    """
-    from pathlib import Path
-
-    ext = Path(file_path).suffix.lower()
-    try:
-        # JPEG images: write EXIF via ExifTool
-        if ext in ('.jpg', '.jpeg'):
-            cmd = [
-                'exiftool', '-overwrite_original',
-                f'-DateTimeOriginal={formatted_time}',
-                f'-CreateDate={formatted_time}',
-                f'-ModifyDate={formatted_time}',
-                file_path
-            ]
-            res = subprocess.run(cmd, stdout=subprocess.PIPE,
-                                 stderr=subprocess.PIPE, text=True)
-            if res.returncode != 0:
-                raise RuntimeError(res.stderr.strip())
-            return True, 'Timestamp updated (ExifTool JPEG)'
-
-        # MOV/MP4: QuickTime atoms
-        if ext in ('.mov', '.mp4'):
-            cmd = [
-                'exiftool', '-overwrite_original',
-                f'-MediaCreateDate={formatted_time}',
-                f'-TrackCreateDate={formatted_time}',
-                f'-CreateDate={formatted_time}',
-                f'-ModifyDate={formatted_time}',
-                file_path
-            ]
-            res = subprocess.run(cmd, stdout=subprocess.PIPE,
-                                 stderr=subprocess.PIPE, text=True)
-            if res.returncode != 0:
-                raise RuntimeError(res.stderr.strip())
-            return True, 'Timestamp updated (ExifTool MOV/MP4)'
-
-        # Fallback for any other file types
-        cmd = [
-            'exiftool', '-overwrite_original',
-            f'-DateTimeOriginal={formatted_time}',
-            f'-CreateDate={formatted_time}',
-            f'-ModifyDate={formatted_time}',
-            file_path
-        ]
-        res = subprocess.run(cmd, stdout=subprocess.PIPE,
-                             stderr=subprocess.PIPE, text=True)
-        if res.returncode != 0:
-            raise RuntimeError(res.stderr.strip())
-        return True, 'Timestamp updated (ExifTool)'
-    except Exception as e:
-        log(f"❌ Timestamp update failed for {file_path}: {e}")
-        moved, reason = move_to_failed(file_path, f"Timestamp update failed: {e}")
-        return False, reason
-
 def write_manifest(rows, path=MANIFEST_PATH):
     import csv
     # 1) read original header order
@@ -401,7 +341,8 @@ def write_manifest(rows, path=MANIFEST_PATH):
     with path.open('w', newline='', encoding='utf-8') as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
-        writer.writerows(rows)
+        for r in tqdm(rows, desc="Writing manifest", unit="row"):
+            writer.writerow(r)
 
 # ----------------------------------------------------------------------------
 # Pipeline steps
@@ -412,6 +353,9 @@ def convert_media(row: dict) -> dict:
     ext = path.suffix.lower()
     row.setdefault('action_taken', '')
     # extension-correction
+    if ext in ('.jpg', '.jpeg', '.mp4', '.mov'):
+        # print(f"[convert_media] Skipping {path.name} (already correct extension)")
+        return row
     corrected, new_ext = correct_file_extension(str(path))
     if corrected != str(path):
         old = path.name
@@ -452,32 +396,6 @@ def convert_videos(row: dict) -> dict:
     return row
 
 
-def update_all_timestamps(row: dict) -> dict:
-    from pathlib import Path
-
-    fp = row.get('media_path', '')
-    row.setdefault('action_taken', '')
-    row.setdefault('notes', '')
-
-    # skip processing for jpg and jpeg
-    if fp.endswith(('.jpg', '.jpeg')):
-        append_action(row, "Skipped timestamp update for JPEG")
-        return row
-    if fp.endswith(('.mov', '.mp4')):
-        append_action(row, "Skipped timestamp update for MOV/MP4")
-        return row
-    if not Path(fp).exists():
-        log(f"⚠ Skipping timestamp: file not found at {fp}")
-        row['notes'] = "Skipped timestamp; file not found"
-        return row
-
-    ok, msg = update_timestamp(fp, row['formatted_time'])
-    if ok:
-        append_action(row, msg)
-    else:
-        row['notes'] = msg
-    return row
-
 # ----------------------------------------------------------------------------
 # Orchestration
 # ----------------------------------------------------------------------------
@@ -495,7 +413,6 @@ def main():
     p.add_argument('--test', action='store_true', help='Run one-sample-per-extension test mode')
     p.add_argument('--skip-media', action='store_true', help='Skip image conversions')
     p.add_argument('--skip-video', action='store_true', help='Skip video conversions')
-    p.add_argument('--skip-timestamp', action='store_true', help='Skip exif/timestamp updates')
     args = p.parse_args()
 
     # Test-mode setup
@@ -514,20 +431,20 @@ def main():
     # Sample one-per-extension if test-mode
     if args.test:
         sampled, seen = [], set()
-        for row in rows:
-            ext = Path(row['media_path']).suffix.lower()
-            if ext in SAMPLE_EXTS and ext not in seen:
-                seen.add(ext)
-                orig_m, orig_j = Path(row['media_path']), Path(row['json_path'])
-                dst_m = PROCESSING_ROOT / orig_m.name
-                dst_j = PROCESSING_ROOT / orig_j.name
-                if not orig_m.exists() or not orig_j.exists():
-                    continue
-                shutil.copy2(orig_m, dst_m)
-                shutil.copy2(orig_j, dst_j)
-                row['media_path'], row['json_path'] = str(dst_m), str(dst_j)
-                sampled.append(row)
-                if len(seen) == len(SAMPLE_EXTS): break
+        for row in tqdm(rows, desc="Sampling test files", unit="file"):
+             ext = Path(row['media_path']).suffix.lower()
+             if ext in SAMPLE_EXTS and ext not in seen:
+                 seen.add(ext)
+                 orig_m, orig_j = Path(row['media_path']), Path(row['json_path'])
+                 dst_m = PROCESSING_ROOT / orig_m.name
+                 dst_j = PROCESSING_ROOT / orig_j.name
+                 if not orig_m.exists() or not orig_j.exists():
+                     continue
+                 shutil.copy2(orig_m, dst_m)
+                 shutil.copy2(orig_j, dst_j)
+                 row['media_path'], row['json_path'] = str(dst_m), str(dst_j)
+                 sampled.append(row)
+                 if len(seen) == len(SAMPLE_EXTS): break
         rows = sampled
         print(f"🔍 Test mode: selected {len(rows)} samples.")
 
@@ -538,10 +455,6 @@ def main():
     # Step 2: videos
     if not args.skip_video:
         rows = run_in_parallel(convert_videos, rows, args.workers, 'Converting videos')
-
-    # Step 3: timestamps
-    if not args.skip_timestamp:
-        rows = run_in_parallel(update_all_timestamps, rows, args.workers, 'Updating timestamps')
 
     # Write updated manifest
     write_manifest(rows)
