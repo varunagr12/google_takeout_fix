@@ -59,3 +59,30 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+# **Usage (1 sentence)**
+# Run `python restore.py --subfolder __UNMATCHED_MEDIA__ [--dry-run]` to relocate files from any quarantine folder back into the canonical `Z###/Takeout/Google Photos/...` structure under *Processing*, with dry-run support for previewing changes.
+
+# ---
+
+# ### Tools / Technologies employed
+
+# | Layer               | Components                      | Purpose                                                                 |
+# | ------------------ | -------------------------------- | ----------------------------------------------------------------------- |
+# | **Python 3.x std-lib** | `shutil`, `pathlib`, `argparse`   | Filesystem operations, path reconstruction, CLI argument parsing       |
+# | **tqdm**            | Progress bar                     | Interactive file move tracking across thousands of entries             |
+# | **WSL-compatible**  | `/mnt/c/...` paths               | Ensures full path compatibility in Windows Subsystem for Linux setups |
+
+# ---
+
+# ### Idea summary (what it does & why it matters)
+
+# `restore.py` is a reliable rollback utility to reverse previous relocations made by pipeline stages like `matching_unmatched.py`, `sim_metadata.py`, or `quick_fix_dedup.py`. It automates the safe return of files from folders like `__UNMATCHED_MEDIA__`, `__FAILED_MEDIA__`, or `__SIM__` back to their original locations.
+
+# How it works:
+# 1. **Scans a specified subfolder** – Finds all files inside a folder like `__UNMATCHED_MEDIA__` or `__SIM__`.
+# 2. **Reconstructs true path** – Based on its relative structure, the script restores the file beneath `Z###/Takeout/Google Photos/...`.
+# 3. **Moves or previews** – In `--dry-run` mode, shows exact moves that would be made. Without it, performs the file move with directory creation.
+
+# Why it matters:
+# This tool provides **safe, reversible cleanup**—ideal for testing new matching strategies or debugging edge cases without risk of losing original organization. It ensures you can return the archive to a known-good state before rerunning the pipeline.

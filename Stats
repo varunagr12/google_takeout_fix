@@ -1,0 +1,13 @@
+Started with how many media files (80000)
+How many were unmatched total (1415media+708json+980media+980json)
+how many were recovered (980media matched with 980 jsons)
+how many left after deduplication (65709 tot files)
+13554 files converted from legacy formats. 
+how many successfully edited metadata (65572)
+how many recovered from similar phash (22)
+
+in the end I now have suddessful edited metadata ones, and 22 additional recovered ones. 
+
+the converted photos goes back into the stack that goes into how many successfully edited
+
+

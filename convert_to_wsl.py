@@ -47,20 +47,19 @@ def convert_csv_paths(input_path: Path, output_path: Path, columns: list):
 if __name__ == "__main__":
     convert_csv_paths(INPUT_CSV, OUTPUT_CSV, PATH_COLUMNS)
 
-'''
-**Usage (1 sentence)**
-Run `python convert_to_wsl.py` to rewrite the path-bearing columns of `metadata_manifest.csv`, converting every Windows drive path like `C:\Users\…` into its WSL-compatible form `/mnt/c/Users/…`, and save the updated CSV in-place.
 
----
+# **Usage (1 sentence)**
+# Run `python convert_to_wsl.py` to rewrite the path-bearing columns of `metadata_manifest.csv`, converting every Windows drive path like `C:\Users\…` into its WSL-compatible form `/mnt/c/Users/…`, and save the updated CSV in-place.
 
-### Tools / Technologies employed
+# ---
 
-* **Python 3.x standard library** – `csv` for manifest parsing/writing, `re` for drive-letter regex conversion, and `pathlib` for cross-platform file handling.
-* **Hard-coded column whitelist** – (`media_path`, `json_path`, `corrected_path`, `visual_review_path`, `duplicate_of`) guarantees only relevant fields are modified.
+# ### Tools / Technologies employed
 
----
+# * **Python 3.x standard library** – `csv` for manifest parsing/writing, `re` for drive-letter regex conversion, and `pathlib` for cross-platform file handling.
+# * **Hard-coded column whitelist** – (`media_path`, `json_path`, `corrected_path`, `visual_review_path`, `duplicate_of`) guarantees only relevant fields are modified.
 
-### Idea summary (what it does & why it matters)
+# ---
 
-`convert_to_wsl.py` bridges the Windows↔WSL divide in one sweep: it detects any `X:\…` style path, swaps backslashes for forward slashes, injects the proper `/mnt/x/` mount prefix, and leaves already-Linux paths untouched. By normalising every location string inside the manifest, the script prevents “file not found” errors when you run the processing pipeline from within WSL2, ensuring that subsequent Python or Bash tools can access the media seamlessly regardless of which OS authored the CSV.
-'''
+# ### Idea summary (what it does & why it matters)
+
+# `convert_to_wsl.py` bridges the Windows↔WSL divide in one sweep: it detects any `X:\…` style path, swaps backslashes for forward slashes, injects the proper `/mnt/x/` mount prefix, and leaves already-Linux paths untouched. By normalising every location string inside the manifest, the script prevents “file not found” errors when you run the processing pipeline from within WSL2, ensuring that subsequent Python or Bash tools can access the media seamlessly regardless of which OS authored the CSV.

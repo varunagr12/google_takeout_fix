@@ -39,6 +39,22 @@ import rawpy
 import imageio
 from pillow_heif import register_heif_opener
 from typing import Optional   
+from pathlib import Path
+import os, uuid, tempfile
+from PIL import Image
+import re
+import threading
+import logging
+import csv
+from pathlib import Path
+
+_write_lock = threading.Lock()
+logging.basicConfig(
+    filename='conversions.log',
+    level=logging.INFO,
+    format='%(asctime)s %(levelname)s %(threadName)s %(message)s',
+)
+logger = logging.getLogger(__name__)
 
 # Ensure PIL can load truncated JPEGs
 ImageFile.LOAD_TRUNCATED_IMAGES = True
@@ -47,7 +63,7 @@ register_heif_opener()
 
 # Simple logger for error messages
 def log(msg):
-    print(msg)
+    logger.info(msg)
 
 # Configuration
 MANIFEST_PATH = Path(r"/mnt/c/Users/vagrawal/OneDrive - Altair Engineering, Inc/Documents/Personal/Code/metadata_manifest.csv")
@@ -106,21 +122,43 @@ def get_safe_conversion_path(original_path: Path,
             i += 1
     return candidate
 
-def rename_json_file(old_json: Path, old_media_name: str, new_media_name: str):
+JSON_RE = re.compile(r'^(?P<base>.+?\.[^\.]+)(?P<suffix>\..+?\.json)$')
+
+def rename_json_sidecar(old_json: Path, new_media_name: str):
     """
-    Rename sidecar JSON to match a media filename change.
-    Returns (new_json_filename, new_json_path, moved_info, reason).
+    Rename old_json on disk so that its filename becomes
+      {new_media_name}{suffix}
+    where suffix is everything from the first ".<something>.json" onward.
+    Returns (new_filename, new_path, moved_info, reason).
     """
+    old_fn = old_json.name
+    m = JSON_RE.match(old_fn)
+    if not m:
+        # nothing to do
+        return old_fn, str(old_json), None, None
+
+    suffix = m.group('suffix')  # e.g. '.supp.json' or '.supplemental-metadata.json'
+    new_fn = f"{new_media_name}{suffix}"
+    new_path = old_json.with_name(new_fn)
+
+    # avoid collisions by simple numbering: foo.json → foo(1).json, etc.
+    if new_path.exists():
+        stem, ext = new_path.stem, new_path.suffix
+        i = 1
+        while True:
+            candidate = new_path.with_name(f"{stem}({i}){ext}")
+            if not candidate.exists():
+                new_path = candidate
+                new_fn   = candidate.name
+                break
+            i += 1
+
     try:
-        new_name = old_json.name.replace(old_media_name, new_media_name)
-        new_path = old_json.with_name(new_name)
-        # ensure no overwrite
-        new_path = get_safe_conversion_path(new_path)
         old_json.rename(new_path)
-        return new_name, str(new_path), None, None
+        return new_fn, str(new_path), None, None
     except Exception as e:
         moved, reason = move_to_failed(str(old_json), f"JSON rename failed: {e}")
-        return old_json.name, str(old_json), moved, reason
+        return old_fn, str(old_json), moved, reason
 
 
 def move_to_failed(file_path: str, reason: str = None):
@@ -215,48 +253,41 @@ def convert_heic_to_jpg(heic_path: str) -> str:
         move_to_failed(heic_path, f"HEIC->JPEG error: {e}")
         return heic_path
 
+
 def convert_dng_to_jpg(dng_path: str) -> str:
     orig = Path(dng_path)
     if orig.suffix.lower() != '.dng':
-        # print(f"[DNG->JPG] Skipping non-DNG file: {orig}")
         return str(orig)
-    # print(f"[DNG->JPG] Starting conversion: {orig}")
-    try:
-        # build the target name: IMG_0499_dng_conv.jpg
-        final_path = get_safe_conversion_path(orig.with_suffix('.jpg'), tag='dng')
-        # print(f"[DNG->JPG] Final save path: {final_path}")
 
-        import uuid, tempfile
-        # make a temp file next to the original
-        tmp_fd, tmp_name = tempfile.mkstemp(
+    tmp_name = None
+    try:
+        # Determine final path
+        final = get_safe_conversion_path(orig.with_suffix('.jpg'), tag='dng')
+        # Make a tmp file
+        fd, tmp_name = tempfile.mkstemp(
             suffix='.jpg',
             prefix=f"tmp_{uuid.uuid4().hex}_",
             dir=str(orig.parent)
         )
-        os.close(tmp_fd)
-        # print(f"[DNG->JPG] Temporary file created: {tmp_name}")
+        os.close(fd)
 
-        # *** THE ONLY CHANGE BELOW: pass str(orig) ***
+        # Read + postprocess
         with rawpy.imread(str(orig)) as raw:
             rgb = raw.postprocess()
-        # print(f"[DNG->JPG] DNG image read and postprocessed")
-
         Image.fromarray(rgb).save(tmp_name, 'JPEG', quality=95)
-        # print(f"[DNG->JPG] Saved temporary JPEG")
 
-        # move into place (overwrites if needed)
-        os.replace(tmp_name, str(final_path))
-        # print(f"[DNG->JPG] Renamed temp file to: {final_path}")
-
+        # Atomically move into place
+        os.replace(tmp_name, str(final))
         orig.unlink()
-        # print(f"[DNG->JPG] Deleted original DNG: {orig}")
-
-        return str(final_path)
+        return str(final)
 
     except Exception as e:
-        # print(f"[DNG->JPG][ERROR] {e}")
-        move_to_failed(str(dng_path), f"DNG->JPEG error: {e}")
-        return dng_path
+        log(f"[DNG→JPG ERROR] {e}")
+        # Clean up partial tmp file
+        if tmp_name and os.path.exists(tmp_name):
+            os.remove(tmp_name)
+        move_to_failed(str(orig), f"DNG→JPEG error: {e}")
+        return str(orig)
 
 def convert_tif_to_jpg(input_path: str) -> str:
     orig = Path(input_path)
@@ -295,35 +326,42 @@ def convert_to_mov(input_path: Path, output_path: Path, formatted_time: str = No
     return subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0
 
 
+
 def handle_video_conversion(media_path: Path, json_path: Path, row: dict):
     old_ext = media_path.suffix.lower().lstrip('.')
     if f".{old_ext}" not in VIDEO_TARGET_EXTS:
         return media_path, json_path
 
     old_name = media_path.name
-    # embed old_ext so .avi and .mpg don’t collide
     mov = get_safe_conversion_path(media_path.with_suffix('.mp4'), tag=old_ext)
-    if not convert_to_mov(media_path, mov, row['formatted_time']):
-        moved, reason = move_to_failed(str(media_path), 'Video conversion failed')
+    try:
+        ok = convert_to_mov(media_path, mov, row.get('formatted_time'))
+        if not ok or not mov.exists() or mov.stat().st_size == 0:
+            raise RuntimeError("FFmpeg failed or produced empty output")
+
+        media_path.unlink()
+        append_action(row, f"Converted .{old_ext} → .mp4")
+        row.update(media_path=str(mov), corrected_path=str(mov), new_ext='.mp4')
+
+        # rename the side-car JSON
+        new_media_name = mov.name
+        old_json = Path(row['json_path'])
+        new_fn, new_p, moved, reason = rename_json_sidecar(old_json, new_media_name)
+        row['json_filename'] = new_fn
+        row['json_path']     = new_p
+        if moved:
+            append_action(row, f"JSON moved → {Path(new_p).name}")
+        if reason:
+            row['notes'] = reason
+
+        return mov, Path(new_p)
+
+    except Exception as e:
+        log(f"[VIDEO→MP4 ERROR] {e}")
+        if mov.exists(): mov.unlink()
+        moved, reason = move_to_failed(str(media_path), f"Video conversion failed: {e}")
         row['notes'] = reason
         return media_path, json_path
-
-    media_path.unlink()
-    append_action(row, f"Converted .{old_ext} -> .mp4")
-    row.update(media_path=str(mov), corrected_path=str(mov), new_ext='.mp4')
-
-    # rename JSON
-    new_json_name = json_path.name.replace(old_name, mov.name)
-    candidate = json_path.with_name(new_json_name)
-    safe_json = get_safe_conversion_path(candidate, tag=old_ext)
-    try:
-        json_path.rename(safe_json)
-        row['json_path']     = str(safe_json)
-        row['json_filename'] = safe_json.name
-    except:
-        move_to_failed(str(json_path), 'JSON rename failed')
-
-    return mov, Path(row['json_path'])
 
 
 def write_manifest(rows, path=MANIFEST_PATH):
@@ -348,42 +386,63 @@ def write_manifest(rows, path=MANIFEST_PATH):
 # Pipeline steps
 # ----------------------------------------------------------------------------
 
+from pathlib import Path
+
 def convert_media(row: dict) -> dict:
-    path = Path(row['media_path'])
-    ext = path.suffix.lower()
+    """
+    1) Do extension‐correction
+    2) Do image‐specific conversion
+    3) If media_path changed at any point, rename its JSON sidecar once
+    """
+    orig_media = Path(row['media_path'])
+    final_media = orig_media
     row.setdefault('action_taken', '')
-    # extension-correction
-    if ext in ('.jpg', '.jpeg', '.mp4', '.mov'):
-        # print(f"[convert_media] Skipping {path.name} (already correct extension)")
-        return row
-    corrected, new_ext = correct_file_extension(str(path))
-    if corrected != str(path):
-        old = path.name
-        path = Path(corrected)
-        row.update(media_path=str(path), corrected_path=str(path), new_ext=new_ext)
-        append_action(row, f"Renamed {old} -> {path.name}")
-    # image-specific conversions
-    if ext == '.png':  new = convert_png_to_jpg(str(path))
-    elif ext == '.heic': new = convert_heic_to_jpg(str(path))
-    elif ext == '.dng': new = convert_dng_to_jpg(str(path))
-    elif ext in ('.tif', '.tiff', '.gif'): new = convert_tif_to_jpg(str(path))
-    else: new = str(path)
-    # if we got a new file, update row and rename JSON
-    if new != str(path):
-        new_suffix = Path(new).suffix
-        append_action(row, f"Converted {ext} -> {new_suffix}")
-        old_name = path.name
-        row['media_path'] = new
-        # rename JSON sidecar
+
+    # --- 1) Extension‐correction step ---
+    corrected, new_ext = correct_file_extension(str(final_media))
+    if corrected != str(final_media):
+        old_name = final_media.name
+        final_media = Path(corrected)
+        row.update(
+            media_path=str(final_media),
+            corrected_path=str(final_media),
+            new_ext=new_ext
+        )
+        append_action(row, f"Renamed {old_name} → {final_media.name}")
+
+    # --- 2) Image‐specific conversion step ---
+    ext = final_media.suffix.lower()
+    if ext == '.png':
+        new_path = Path(convert_png_to_jpg(str(final_media)))
+    elif ext == '.heic':
+        new_path = Path(convert_heic_to_jpg(str(final_media)))
+    elif ext == '.dng':
+        new_path = Path(convert_dng_to_jpg(str(final_media)))
+    elif ext in ('.tif', '.tiff', '.gif'):
+        new_path = Path(convert_tif_to_jpg(str(final_media)))
+    else:
+        new_path = final_media
+
+    # If conversion produced a new file, log and update
+    if new_path != final_media:
+        append_action(row, f"Converted → {new_path.name}")
+        final_media = new_path
+        row.update(
+            media_path=str(final_media),
+            corrected_path=str(final_media)
+        )
+
+    # --- 3) JSON side-car rename once if media changed ---
+    if final_media != orig_media:
         old_json = Path(row['json_path'])
-        new_media_name = Path(new).name
-        new_json_fn, new_json_p, moved, reason = rename_json_file(old_json, old_name, new_media_name)
-        row['json_filename'] = new_json_fn
-        row['json_path'] = new_json_p
+        new_fn, new_p, moved, reason = rename_json_sidecar(old_json, final_media.name)
+        row['json_filename'] = new_fn
+        row['json_path']     = new_p
         if moved:
-            append_action(row, f"JSON moved -> {Path(new_json_p).name}")
+            append_action(row, f"JSON moved → {Path(new_p).name}")
         if reason:
             row['notes'] = reason
+
     return row
 
 
@@ -422,11 +481,12 @@ def main():
             shutil.rmtree(test_root)
         test_root.mkdir(parents=True)
         globals()['PROCESSING_ROOT'] = test_root
-        print(f"🔍 Test mode: using {test_root}")
+        logger.info(f"🔍 Test mode: using {test_root}")
 
     # Load manifest
     with MANIFEST_PATH.open('r', newline='', encoding='utf-8') as f:
         rows = list(csv.DictReader(f))
+    logger.info(f"🔄 Pipeline start: {len(rows)} items to process")
 
     # Sample one-per-extension if test-mode
     if args.test:
@@ -446,7 +506,7 @@ def main():
                  sampled.append(row)
                  if len(seen) == len(SAMPLE_EXTS): break
         rows = sampled
-        print(f"🔍 Test mode: selected {len(rows)} samples.")
+        logger.info(f"🔍 Test mode: selected {len(rows)} samples.")
 
     # Step 1: media
     if not args.skip_media:
@@ -458,8 +518,10 @@ def main():
 
     # Write updated manifest
     write_manifest(rows)
-
-    print("\n✅ Stage complete!")
+    # Log total failures recorded in 'notes'
+    failures = sum(1 for r in rows if r.get('notes'))
+    logger.info(f"❌ Total failures recorded: {failures}")
+    logger.info("\n✅ Stage complete!")
 
 def run():
     main()
@@ -471,42 +533,43 @@ if __name__ == '__main__':
         import cProfile
         # run the entire pipeline under cProfile (single worker, test mode, etc.)
         cProfile.run('run()', 'profile.prof')
-        print('▶ Profile written to profile.prof')
+        logger.info('▶ Profile written to profile.prof')
     else:
         run()
 
-'''
-**Usage (1 sentence)**
-Run `python metadata.py [--workers N] [--test] [--skip-media] [--skip-video] [--skip-timestamp]` to launch the **core media-normalisation pipeline** that batch-converts oddball images/videos to mainstream formats, repairs file extensions, copies timestamps into EXIF, and writes every action back into `metadata_manifest.csv`, quarantining any failures along the way.
+# **Usage (1 sentence)**
+# Run `python metadata.py [--workers N] [--test] [--skip-media] [--skip-video]` to launch the **core media-normalization pipeline**, which batch-converts legacy images/videos into modern, consistent formats, repairs incorrect file extensions, injects EXIF timestamps, renames JSON sidecars in sync, and updates `metadata_manifest.csv`, isolating failed files for manual triage.
 
----
+# ---
 
-### Tools / Technologies employed
+# ### Tools / Technologies employed
 
-| Layer                       | Components                                                                 | Purpose                                                                                      |
-| --------------------------- | -------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
-| **Python 3.x std-lib**      | `argparse`, `csv`, `pathlib`, `shutil`, `subprocess`, `concurrent.futures` | CLI flags, manifest I/O, safe renames/moves, FFmpeg + ExifTool calls, parallel orchestration |
-| **Pillow (+ pillow\_heif)** | RGB decoding (JPEG, PNG, HEIC), EXIF-aware orientation                     | Uniform image loading and format conversion                                                  |
-| **piexif**                  | Low-level EXIF read/write                                                  | Injects `DateTimeOriginal` into JPEG headers                                                 |
-| **rawpy + imageio**         | DNG/RAW -> RGB pipeline                                                     | High-fidelity conversion of camera RAWs to JPEG                                              |
-| **FFmpeg (CLI)**            | Lossless or H.264/AAC remux of legacy videos -> `.mov`                      | Modernises AVI/MPG/MTS while preserving quality                                              |
-| **ExifTool (CLI)**          | Timestamp writing for non-JPEG formats                                     | Consistent metadata across all media types                                                   |
-| **ThreadPoolExecutor**      | User-tunable worker pool                                                   | Parallelism that saturates I/O and CPU cores                                                 |
-| **tqdm**                    | Progress bars for each stage                                               | Real-time pipeline feedback                                                                  |
-| **Robust failure-handling** | `__FAILED_FILES__` quarantine + detailed notes                             | Keeps bad files out of the happy path without data loss                                      |
+# | Layer                       | Components                                                                 | Purpose                                                                                      |
+# | --------------------------- | -------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+# | **Python 3.x std-lib**      | `argparse`, `csv`, `pathlib`, `shutil`, `subprocess`, `concurrent.futures` | CLI flags, manifest I/O, format corrections, parallel processing, FFmpeg/ExifTool CLI calls |
+# | **Pillow (+ pillow_heif)** | Unified loader for JPEG/PNG/HEIC                                           | Image format decoding, RGBA flattening, EXIF-safe conversion                                |
+# | **piexif**                  | Low-level EXIF manipulation                                                | Timestamp writing to JPEG headers                                                           |
+# | **rawpy + imageio**         | Camera RAW → RGB converter                                                 | Converts `.dng`, `.nef`, etc. to high-quality JPEGs                                         |
+# | **FFmpeg (CUDA-capable)**   | `.avi`/`.mpg`/`.mts` → `.mp4`/`.mov` (hardware-accelerated)                | Modernizes legacy video formats, supports hardware encoding                                 |
+# | **ExifTool (CLI)**          | Writes EXIF for non-JPEG formats                                           | Enables full metadata compatibility across platforms                                        |
+# | **Regex + sidecar tools**   | JSON filename parser, synchronized renamer                                | Prevents desync between media and metadata                                                  |
+# | **Thread/ProcessPoolExecutor** | Multithreaded and multiprocessing hybrid                                   | Efficient CPU + I/O parallelism for heavy conversion workloads                              |
+# | **tqdm**                    | Live progress bars for all major stages                                   | Transparent visual feedback                                                                 |
+# | **Robust error quarantine** | `__FAILED_FILES__` relocation + `action_taken`, `notes` columns            | Traceable error isolation while preserving raw data                                         |
 
----
+# ---
 
-### Idea summary (what it does & why it matters)
+# ### Idea summary (what it does & why it matters)
 
-`metadata.py` is the linchpin that transforms a messy, heterogeneous Google-Takeout dump into a **clean, metadata-rich, archival-grade library**:
+# `metadata.py` is a comprehensive pipeline that transforms chaotic, poorly formatted Google Takeout dumps into a **clean, standardized, metadata-rich photo and video archive**. Its key contributions:
 
-1. **File-extension sanity check** – detects mismatches by inspecting magic bytes, renames `.png` masquerading as JPEGs, MOVs mis-labelled as MP4s, etc.
-2. **Image conversions** – PNGs gain white-matte JPEGs, HEICs become JPEGs for universal viewing, and DNG/RAW files are demosaiced to high-quality RGB.
-3. **Video modernisation** – legacy AVI/MPG/MTS containers are remuxed (or re-encoded when needed) to fast-start `.mov`, with sidecar JSONs renamed in lock-step.
-4. **EXIF timestamp injection** – pulls the authoritative Google timestamp from the manifest and writes it into every photo/video, ensuring chronological integrity in any viewer.
-5. **Parallel, test-friendly architecture** – configurable worker count, optional one-sample-per-extension mode, and granular `--skip-*` flags let you iterate quickly and safely.
-6. **Bullet-proof logging & recovery** – every action is appended to `action_taken`, any hiccup moves the offending files (and all variants) to `__FAILED_FILES__`, and detailed notes capture the reason.
+# 1. **File-extension validation & correction** – Uses magic bytes to detect mislabeled files and safely rename them while tagging their origin (e.g., `.png_conv.jpg`), preventing future ambiguity.
+# 2. **Image format conversions** – Converts PNGs to white-matte JPEGs, HEICs to JPEGs (for compatibility), and RAW formats like DNG/NEF into color-accurate JPEGs using `rawpy`.
+# 3. **Video remuxing & modernization** – Transcodes `.avi`, `.mpg`, `.mts`, `.3gp` to `.mp4` or `.mov` using CUDA-enabled FFmpeg pipelines, preserving sync and quality while reducing playback errors.
+# 4. **Metadata-sidecar synchronization** – If filenames change, the corresponding `.json` sidecars are renamed with proper suffix preservation (`.supp.json`, `.supplemental-metadata.json`), avoiding orphaned metadata.
+# 5. **EXIF timestamp injection** – Embeds Google's canonical timestamp into EXIF (`DateTimeOriginal`) for JPEGs and passes it along for FFmpeg/ExifTool processing where supported, restoring chronological order in any viewer.
+# 6. **Parallel processing** – Image and video conversions are parallelized via `ProcessPoolExecutor`, with configurable worker count (`--workers`) to maximize CPU/GPU utilization.
+# 7. **Test-safe development mode** – The `--test` flag creates a minimal synthetic set, selecting one file per extension, and duplicates them in a sandbox directory to safely test the pipeline logic.
+# 8. **Bulletproof logging & failure tracking** – All steps are logged to `conversions.log`, failures are routed to `__FAILED_FILES__` with variants preserved, and every row records the transformations and reasons in `action_taken` and `notes`.
 
-By automating all these tedious, error-prone chores in a single multithreaded run, the script elevates the dataset from *dump* to *curated archive*, paving the way for flawless deduplication, sharing, and long-term preservation—exactly the transformation that motivated the entire project.
-'''
+# This script upgrades the raw dump from a brittle collection of half-compatible files into a **robust, interoperable archive**—ready for downstream deduplication, analysis, visualization, or long-term preservation—aligning perfectly with the whitepaper's vision of automated, audit-friendly data hygiene.

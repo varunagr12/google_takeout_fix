@@ -10,7 +10,7 @@ def estimate_total_from_csv(csv_path: Path) -> int:
 
 def exiftool_times():
     times_csv = Path("times.csv").resolve()
-    input_dir = Path("/mnt/c/Users/vagrawal/OneDrive - Altair Engineering, Inc/Documents/Personal/Pictures/Processing/__test_files__").resolve()
+    input_dir = Path("/mnt/c/Users/vagrawal/OneDrive - Altair Engineering, Inc/Documents/Personal/Pictures/Processing/").resolve()
 
     total_estimate = estimate_total_from_csv(times_csv)
 
@@ -57,3 +57,30 @@ def exiftool_times():
 
 if __name__ == "__main__":
     exiftool_times()
+
+# **Usage (1 sentence)**
+# Run `python metadata.py` to apply all timestamps in `times.csv` to the actual media files inside *Processing*, using ExifTool in recursive mode with live progress tracking.
+
+# ---
+
+# ### Tools / Technologies employed
+
+# | Layer               | Components                                        | Purpose                                                                                 |
+# | ------------------ | ------------------------------------------------- | --------------------------------------------------------------------------------------- |
+# | **Python 3.x std-lib** | `subprocess`, `re`, `csv`, `pathlib`              | Shell interaction, parsing progress, resolving file paths, counting media from CSV     |
+# | **ExifTool (CLI)** | `-csv=times.csv`, `-r`, `-overwrite_original`, etc | Inject timestamps into EXIF and QuickTime metadata headers                             |
+# | **tqdm**            | Progress bar                                       | Tracks and displays real-time progress while ExifTool runs                             |
+# | **Regex**           | `\[N/M\]` pattern                                  | Parses live output from ExifTool to update the progress bar dynamically                |
+
+# ---
+
+# ### Idea summary (what it does & why it matters)
+
+# `metadata.py` is a lightweight, terminal-driven wrapper around the final timestamp-application step in the pipeline:
+
+# 1. **Estimates workload** – Parses `times.csv` to determine the number of entries for progress tracking.
+# 2. **Spawns ExifTool** – Runs it with `-csv=times.csv -r -overwrite_original`, applying timestamps to every file listed.
+# 3. **Tracks live progress** – Uses regex on ExifTool’s verbose output to show a true progress bar.
+# 4. **Summarizes outcome** – Collects and displays useful end-of-run stats like directories scanned, files updated, skipped, or errored.
+
+# Without this script, `exiftool -csv=times.csv …` works silently and slowly. This wrapper brings **visibility, reliability, and accountability** to the most delicate operation—*modifying media metadata in-place*. It's the final checkpoint before declaring the library archive-ready.

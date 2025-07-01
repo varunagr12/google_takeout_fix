@@ -3,7 +3,7 @@ from pathlib import Path
 from collections import defaultdict
 
 # --- Config ---
-DRY_RUN = False  # Set to False to apply changes
+DRY_RUN = True  # Set to False to apply changes
 MANIFEST_PATH = Path(r"/mnt/c/Users/vagrawal/OneDrive - Altair Engineering, Inc/Documents/Personal/Code/metadata_manifest.csv")
 
 # --- Helper: Score function to decide best candidate ---

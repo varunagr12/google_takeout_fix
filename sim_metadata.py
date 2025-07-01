@@ -6,21 +6,44 @@ from PIL import Image
 import imagehash
 import piexif
 import cv2
-
 from pillow_heif import register_heif_opener
 register_heif_opener()
 
+# Load perceptual hashes from manifest
+import csv
+MANIFEST_FILE = Path("/mnt/c/Users/vagrawal/OneDrive - Altair Engineering, Inc/Documents/Personal/Code/metadata_manifest.csv")
+phash_map = {}
+global_candidates = []
 # Basic settings and configuration options with updated paths for WSL
 UNMATCHED_ROOT = Path("/mnt/c/Users/vagrawal/OneDrive - Altair Engineering, Inc/Documents/Personal/Pictures/Processing/__UNMATCHED_MEDIA__")
 PROCESSING_ROOT = Path("/mnt/c/Users/vagrawal/OneDrive - Altair Engineering, Inc/Documents/Personal/Pictures/Processing")
-HASH_THRESHOLD = 15  # Adjust this value to tweak similarity matching
-DRY_RUN = True 
+HASH_THRESHOLD = 10  # Adjust this value to tweak similarity matching
+DRY_RUN = False 
+SEARCH_WITHIN_YEAR_ONLY = False  # Set to True to restrict search to same "Photos from XXXX" folder
+with MANIFEST_FILE.open(newline='', encoding='utf-8') as mf:
+    for row in csv.DictReader(mf):
+        ph = row.get('phash64', '').strip()
+        path_str = row.get('media_path', '').strip()
+        if ph and path_str:
+            try:
+                ph_int = int(ph, 16)
+                phash_map[path_str] = ph_int
+
+                path_obj = Path(path_str)
+                if UNMATCHED_ROOT not in path_obj.parents:
+                    global_candidates.append((path_obj, ph_int))
+            except ValueError:
+                continue
+
 processed_files = []
 duplicates_found = []
 
 # File type definitions for images and videos
 IMAGE_EXTS = {'.jpg', '.jpeg', '.png', '.heic'}
 VIDEO_EXTS = {'.mp4', '.mov', '.avi', '.mkv'}
+
+# New folder for similar matches
+SIM_ROOT = PROCESSING_ROOT / "__SIM__"
 
 def compute_hash(path):
     ext = path.suffix.lower()
@@ -84,45 +107,79 @@ def set_timestamp_to_exif(image_path, timestamp):
         return False
 
 def match_unmatched_images():
+    print("🔁 Search mode:", "Year-restricted" if SEARCH_WITHIN_YEAR_ONLY else "Global")
+
     # Find all unmatched files in the specified directory, excluding any in masked folders
     unmatched_files = [f for f in UNMATCHED_ROOT.rglob("*") if f.is_file() and not any(p.name.startswith("_") and not p.name.startswith("__") for p in f.parents)]
     print(f"\nFound {len(unmatched_files)} unmatched files to process.\n")
 
     for ufile in tqdm(unmatched_files, desc="Processing unmatched files"):
         print(f"\n🔍 Processing unmatched file: {ufile}")
-        uhash = compute_hash(ufile)
+        uhash = phash_map.get(str(ufile))
         if uhash is None:
             continue
 
-        year_name = get_year_from_path(ufile)
-        if not year_name:
-            print(f"❌ No year folder found for {ufile}")
-            continue
+        if SEARCH_WITHIN_YEAR_ONLY:
+            year_name = get_year_from_path(ufile)
+            if not year_name:
+                print(f"❌ No year folder found for {ufile}")
+                continue
 
-        candidate_folders = get_all_year_folders(year_name)
-        print(f"🔎 Searching in {len(candidate_folders)} candidate folders for year: {year_name}")
+            candidate_folders = get_all_year_folders(year_name)
+            print(f"🔎 Searching in {len(candidate_folders)} candidate folders for year: {year_name}")
+
+            candidates = []
+            for folder in candidate_folders:
+                for cfile in folder.rglob("*"):
+                    if (
+                        cfile.is_file()
+                        and cfile.suffix.lower() in IMAGE_EXTS | VIDEO_EXTS
+                        and cfile != ufile
+                        and not any(p.name.startswith("_") for p in cfile.parents)
+                    ):
+                        chash = phash_map.get(str(cfile))
+                        if chash is not None:
+                            candidates.append((cfile, chash))
+        else:
+            print(f"🌐 Global search enabled — using all {len(global_candidates)} candidates.")
+            candidates = global_candidates
 
         best_match = None
         best_dist = 100
         near_matches = []
 
-        for folder in candidate_folders:
-            for cfile in folder.rglob("*"):
-                if cfile.is_file() and cfile.suffix.lower() in IMAGE_EXTS | VIDEO_EXTS and cfile != ufile and not any(p.name.startswith("_") for p in cfile.parents):
-                    chash = compute_hash(cfile)
-                    if chash is None:
-                        continue
-                    dist = uhash - chash
-                    near_matches.append((cfile, dist))
-                    if dist < best_dist:
-                        best_match = cfile
-                        best_dist = dist
+        for cfile, chash in candidates:
+            if str(cfile) == str(ufile):
+                continue
+            dist = (uhash ^ chash).bit_count()
+            near_matches.append((cfile, dist))
+            if dist < best_dist:
+                best_match = cfile
+                best_dist = dist
 
         # Organize and display the closest matches
+# Sort by visual similarity (Hamming distance)
         near_matches.sort(key=lambda x: x[1])
+
+        # Extract the year from the unmatched file
+        unmatched_year = get_year_from_path(ufile)
+        if unmatched_year:
+            # Filter to same-year matches
+            near_matches = [(nm, d) for nm, d in near_matches if get_year_from_path(nm) == unmatched_year]
+
+        # Display top filtered matches
         print(f"🔍 Near matches for {ufile.name}:")
-        for nm, dist in near_matches[:5]:
-            print(f"  • {nm} (distance: {dist})")
+        if near_matches:
+            for nm, dist in near_matches[:5]:
+                print(f"  • {nm} (distance: {dist})")
+        else:
+            print("  • No matches from the same year remain after filtering.")
+
+        # Update best match after year filtering
+        if near_matches:
+            best_match, best_dist = near_matches[0]
+        else:
+            best_match, best_dist = None, 999
 
         if best_match:
             if best_dist == 0:
@@ -137,10 +194,13 @@ def match_unmatched_images():
                         print(f"Error deleting {ufile}: {e}")
                 duplicates_found.append({"unmatched": str(ufile), "match": str(best_match)})
             elif best_dist <= HASH_THRESHOLD:
-                # If the file is a near match, prepare to move it and adjust the timestamp
+                # If the file is a near match, prepare to move it under SIM_ROOT and adjust timestamp
                 timestamp = get_timestamp_from_exif(str(best_match)) if best_match.suffix.lower() in IMAGE_EXTS else None
                 new_name = f"{ufile.stem}_sim{ufile.suffix}"
-                dest_path = best_match.parent / new_name
+                # retain subfolder structure from UNMATCHED_ROOT
+                rel = ufile.relative_to(UNMATCHED_ROOT)
+                dest_dir = SIM_ROOT / rel.parent
+                dest_path = dest_dir / new_name
 
                 processed_files.append({
                     "unmatched": str(ufile),
@@ -151,6 +211,8 @@ def match_unmatched_images():
                 })
 
                 if not DRY_RUN:
+                    # ensure destination directory exists
+                    dest_dir.mkdir(parents=True, exist_ok=True)
                     try:
                         shutil.move(str(ufile), str(dest_path))
                         if timestamp and dest_path.suffix.lower() in IMAGE_EXTS:
@@ -175,8 +237,8 @@ def print_summary():
         print(f"- {entry['unmatched']} -> {entry['dest']} (match: {entry['match']}, distance: {entry['distance']}, timestamp: {entry['timestamp']})")
 
     print(f"\n🗑️ Exact duplicates found: {len(duplicates_found)}")
-    for entry in duplicates_found:
-        print(f"- {entry['unmatched']} (duplicate of {entry['match']})")
+    # for entry in duplicates_found:
+    #     print(f"- {entry['unmatched']} (duplicate of {entry['match']})")
 
 if __name__ == "__main__":
     match_unmatched_images()
